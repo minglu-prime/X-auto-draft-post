@@ -1,0 +1,98 @@
+# Copy to config.yaml (git-ignored) and adjust.
+# Relative paths are resolved against the folder this file lives in.
+
+db_path: data/xdraft.db
+lookback_days: 3
+
+claude_code:
+  enabled: true
+  projects_dir: ~/.claude/projects
+  # fnmatch globs on the project folder name; empty include = all projects.
+  include_projects: []
+  exclude_projects: ["*private*", "*client*"]
+  max_prompts_per_session: 15
+  max_prompt_chars: 400
+  min_user_prompts: 1
+
+notes:
+  enabled: true
+  inbox_dir: notes/inbox
+
+git:
+  enabled: true
+  repos:
+    - ~/code/X-auto-draft-post
+  # Passed to `git log --author` (OR-ed); empty = all authors.
+  authors: []
+
+articles:
+  enabled: true
+  # AI keyword list used by feeds with `filter: true` (leave out for the built-in list).
+  # keywords: [LLM, Claude, GPT, Gemini, agent]
+  fetch_fulltext: false          # needs: pip install 'xdraft[fulltext]'
+  hackernews:
+    enabled: true
+    min_points: 100
+    keyword_filter: false        # false = all front-page tech stories (trends), true = AI only
+  github:                        # fast-rising new repos via the GitHub search API
+    enabled: true
+    created_within_days: 7
+    min_stars: 100
+    max_items: 15
+  # Feed URLs change; if one errors, check the site for its current feed.
+  # category: ai | tech | community | product | zh  (context for trend analysis)
+  feeds:
+    # AI labs and practitioners
+    - {name: Simon Willison, url: "https://simonwillison.net/atom/everything/", filter: true, category: ai}
+    - {name: OpenAI News, url: "https://openai.com/news/rss.xml", filter: false, category: ai}
+    - {name: Google DeepMind, url: "https://deepmind.google/blog/rss.xml", filter: false, category: ai}
+    - {name: Hugging Face Blog, url: "https://huggingface.co/blog/feed.xml", filter: false, category: ai}
+    - {name: arXiv cs.CL, url: "https://rss.arxiv.org/rss/cs.CL", filter: true, category: ai, max_items: 50}
+    # Communities and products
+    - {name: r/LocalLLaMA, url: "https://www.reddit.com/r/LocalLLaMA/top/.rss?t=day", filter: false, category: community}
+    - {name: r/MachineLearning, url: "https://www.reddit.com/r/MachineLearning/top/.rss?t=day", filter: false, category: community}
+    - {name: Product Hunt, url: "https://www.producthunt.com/feed", filter: true, category: product}
+    # Chinese tech media
+    - {name: 36Kr, url: "https://36kr.com/feed", filter: false, category: zh}
+    - {name: 少数派, url: "https://sspai.com/feed", filter: false, category: zh}
+    # 机器之心 / 量子位 have no stable official RSS; if you run RSSHub, add their routes here, e.g.
+    # - {name: 机器之心, url: "http://localhost:1200/<route from docs.rsshub.app>", filter: false, category: zh}
+
+redaction:
+  # Extra regexes replaced with [REDACTED] in everything collected.
+  extra_patterns: []
+
+# LLM: any OpenAI-compatible API. Put the key in .env, never here.
+llm:
+  provider: deepseek
+  base_url: https://api.deepseek.com
+  model: deepseek-chat
+  api_key_env: DEEPSEEK_API_KEY
+  # OpenAI instead:
+  # provider: openai
+  # base_url: null            # SDK default (api.openai.com)
+  # model: <an OpenAI chat model that supports JSON mode>
+  # api_key_env: OPENAI_API_KEY
+  temperature: 0.7
+
+# Timezone for posting slots and the daily automatic run.
+timezone: Asia/Shanghai
+
+pipeline:
+  suggest_count: 8            # topic suggestions per run
+  personal_items: 30          # own sessions/notes/commits always included
+  trend_terms: 15
+  optimize_rounds: 2          # extra optimize passes while length checks fail
+  auto_suggest_at: "08:30"    # daily collect + suggest while `xdraft serve` runs; null = off
+
+draft:
+  max_items: 60
+  thread_max_tweets: 5
+  style_path: style.md        # your voice; see style.example.md or `xdraft style-import`
+
+publish:
+  enabled: false              # true = really post to X; false = dry run only
+  slots: ["09:00", "20:00"]   # approved posts go into the next free slot (local time)
+  max_per_slot: 1
+  redirect_uri: http://127.0.0.1:8000/x/callback   # must match your X app settings
+  metrics_every_minutes: 120

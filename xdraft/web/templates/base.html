@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>xdraft — {% block title %}queue{% endblock %}</title>
+<link rel="stylesheet" href="/static/style.css">
+<script src="/static/app.js" defer></script>
+</head>
+<body>
+<header class="top">
+  <strong class="brand">xdraft</strong>
+  <nav>
+    <a href="/topics" {% if request.url.path == '/topics' %}class="on"{% endif %}>1 Topics</a>
+    <a href="/" {% if request.url.path == '/' %}class="on"{% endif %}>2 Drafts</a>
+    <a href="/sources" {% if request.url.path == '/sources' %}class="on"{% endif %}>Sources</a>
+    <a href="/inbox" {% if request.url.path == '/inbox' %}class="on"{% endif %}>Inbox</a>
+    <a href="/history" {% if request.url.path == '/history' %}class="on"{% endif %}>History</a>
+  </nav>
+  <div class="status">
+    {% if cfg.publish.enabled %}<span class="badge live">LIVE posting</span>{% else %}<span class="badge dry">Dry run</span>{% endif %}
+    {% if x.connected %}
+      <span class="badge ok">X connected</span>
+      <form data-post action="/x/logout" class="inline"><button class="link">disconnect</button></form>
+    {% elif x.client_id_set %}<a class="badge" href="/x/login">Connect X</a>
+    {% else %}<span class="badge muted" title="Set X_CLIENT_ID in .env">X not configured</span>{% endif %}
+  </div>
+</header>
+<main>{% block content %}{% endblock %}</main>
+</body>
+</html>

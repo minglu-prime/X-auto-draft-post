@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}inbox{% endblock %}
+{% block content %}
+<h2>Quick note</h2>
+<p class="muted">Your takes on models and tools. Notes are the strongest signal when picking topics.</p>
+<form data-post action="/inbox" data-target="#run-result" class="note" data-reset>
+  <input name="title" placeholder="Title (optional)">
+  <textarea name="body" rows="7" required placeholder="What did you notice? e.g. the new model kept the plan across a 40-file refactor…"></textarea>
+  <div class="row">
+    <input name="tags" placeholder="tags, comma separated">
+    <input name="url" placeholder="related link (optional)">
+    <button class="primary">Save note</button>
+  </div>
+</form>
+<div id="run-result" class="result"></div>
+{% endblock %}
