@@ -17,7 +17,7 @@ import httpx
 
 from xdraft.config import PublishConfig
 
-SCOPES = "tweet.read tweet.write users.read offline.access"
+SCOPES = "tweet.read tweet.write users.read offline.access media.write"
 
 
 class XError(RuntimeError):
@@ -150,10 +150,18 @@ class XClient:
             return resp.json()
         raise XAuthError("X authentication failed")
 
-    def post_tweet(self, text: str, reply_to: str | None = None) -> str:
+    def upload_image(self, name: str, data: bytes, mime: str) -> str:
+        """One-request upload (POST /2/media/upload, needs media.write); returns the media id."""
+        resp = self._request("POST", "/2/media/upload", files={"media": (name, data, mime)},
+                             data={"media_category": "tweet_image"})
+        return str(resp["data"]["id"])
+
+    def post_tweet(self, text: str, reply_to: str | None = None, media_ids: list[str] | None = None) -> str:
         body: dict = {"text": text}
         if reply_to:
             body["reply"] = {"in_reply_to_tweet_id": reply_to}
+        if media_ids:
+            body["media"] = {"media_ids": media_ids}
         data = self._request("POST", "/2/tweets", json=body)
         return str(data["data"]["id"])
 

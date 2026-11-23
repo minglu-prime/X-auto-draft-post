@@ -167,6 +167,27 @@ def test_suggest_then_write_topic(setup):
     assert "其它开头" in html and "历史版本" in html
 
 
+def test_upload_serve_and_remove_image(setup):
+    client, _llm, engine, ids = setup
+    png = b"\x89PNG\r\n\x1a\n" + b"\x00" * 32
+    r = client.post(f"/drafts/{ids[0]}/images", data={"tweet": "1"},
+                    files={"file": ("shot.png", png, "image/png")}, headers=H)
+    assert r.status_code == 200 and "已添加配图" in r.text
+    (name,) = _get(engine, ids[0]).images[0]
+    assert f"/media/{ids[0]}/{name}" in r.text
+    served = client.get(f"/media/{ids[0]}/{name}")
+    assert served.status_code == 200 and served.content == png
+    assert client.get(f"/media/{ids[0]}/..%2F..%2Fconfig.yaml").status_code == 404
+    assert client.get(f"/media/{ids[1]}/{name}").status_code == 404  # belongs to another draft
+
+    r = client.post(f"/drafts/{ids[0]}/images", data={"tweet": "1"},
+                    files={"file": ("notes.txt", b"hello", "text/plain")}, headers=H)
+    assert "PNG" in r.text and _get(engine, ids[0]).images == [[name]]
+
+    r = client.post(f"/drafts/{ids[0]}/images/remove", data={"tweet": "1", "name": name}, headers=H)
+    assert "已删除配图" in r.text and _get(engine, ids[0]).images == [[]]
+
+
 def test_dismiss_topic(setup):
     client, _llm, engine, _ids = setup
     with Session(engine) as s:

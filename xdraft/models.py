@@ -79,6 +79,7 @@ class Draft(SQLModel, table=True):
     stage: str = "written"  # written → polished → optimized (last pipeline stage reached)
     revisions: list = Field(default_factory=list, sa_column=Column(JSON))  # [{stage, tweets}]
     alt_hooks: list = Field(default_factory=list, sa_column=Column(JSON))  # alternative first lines
+    images: list = Field(default_factory=list, sa_column=Column(JSON))  # per tweet: [file names] (xdraft.media)
     created_at: datetime
     updated_at: datetime
 

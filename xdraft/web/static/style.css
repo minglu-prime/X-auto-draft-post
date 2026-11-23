@@ -168,7 +168,8 @@ pre { white-space: pre-wrap; font-size: 12.5px; color: var(--muted); }
 .stages span + span { border-left: 1px solid var(--line); }
 .stages span.done { background: rgba(75, 227, 138, .14); color: var(--ok); }
 .tweets p { white-space: pre-wrap; margin: 0 0 8px; overflow-wrap: anywhere; }
-.counter span { font-size: 12px; color: var(--muted); margin-right: 8px; }
+.counter { display: inline-flex; flex-wrap: wrap; gap: 0 8px; min-width: 0; }  /* long threads wrap on narrow screens */
+.counter span { font-size: 12px; color: var(--muted); }
 .counter .over { color: var(--over); font-weight: 600; }
 .hint { font-size: 12px; flex: 1; }
 .warnings { margin: 0; padding: 8px 12px 8px 28px; color: var(--warn); font-size: 13px;
@@ -183,6 +184,18 @@ pre { white-space: pre-wrap; font-size: 12.5px; color: var(--muted); }
 .hooks button.link:hover { color: var(--accent); border-color: var(--accent); }
 .revisions { font-size: 13px; }
 .revisions p { margin: 2px 0 6px; white-space: pre-wrap; color: var(--muted); }
+
+/* draft images */
+.images { display: flex; flex-direction: column; gap: 8px; }
+.img-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-start; }
+.img-label { font: 12px var(--mono); color: var(--accent-2); width: 100%; }
+.images figure { position: relative; margin: 0; }
+.images img { display: block; height: 96px; max-width: 220px; object-fit: contain; border-radius: 8px;
+  border: 1px solid var(--line-strong); background: #000; }
+.images img:hover { border-color: var(--accent); }
+.img-del { position: absolute; top: 4px; right: 4px; padding: 0 7px !important; border-radius: 6px; font-size: 15px;
+  line-height: 1.4; background: rgba(0, 0, 0, .7); border-color: rgba(255, 93, 108, .5); color: var(--danger); }
+.img-upload input[type=file] { max-width: 260px; font-size: 13px; }
 
 /* tables, forms on other pages */
 .history { width: 100%; border-collapse: separate; border-spacing: 0; overflow: hidden; }
