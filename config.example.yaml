@@ -49,9 +49,8 @@ articles:
     - {name: Google DeepMind, url: "https://deepmind.google/blog/rss.xml", filter: false, category: ai}
     - {name: Hugging Face Blog, url: "https://huggingface.co/blog/feed.xml", filter: false, category: ai}
     - {name: arXiv cs.CL, url: "https://rss.arxiv.org/rss/cs.CL", filter: true, category: ai, max_items: 50}
-    # Communities and products
-    - {name: r/LocalLLaMA, url: "https://www.reddit.com/r/LocalLLaMA/top/.rss?t=day", filter: false, category: community}
-    - {name: r/MachineLearning, url: "https://www.reddit.com/r/MachineLearning/top/.rss?t=day", filter: false, category: community}
+    # Products
+    # Reddit RSS is not included: Reddit now rejects unauthenticated feed readers (404/429 after one request).
     - {name: Product Hunt, url: "https://www.producthunt.com/feed", filter: true, category: product}
     # Chinese tech media
     - {name: 36Kr, url: "https://36kr.com/feed", filter: false, category: zh}

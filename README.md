@@ -8,7 +8,7 @@ See [docs/PLAN.md](docs/PLAN.md) for the design and the survey of similar projec
 
 | Step | What happens | Where |
 |---|---|---|
-| 0. Collect | Your Claude Code sessions, notes, commits; AI blogs, arXiv; **trends**: HN front page, fast-rising GitHub repos, Reddit, Product Hunt, 36Kr / 少数派 | `xdraft collect`, or daily automatically |
+| 0. Collect | Your Claude Code sessions, notes, commits; AI blogs, arXiv; **trends**: HN front page, fast-rising GitHub repos, Product Hunt, 36Kr / 少数派 | `xdraft collect`, or daily automatically |
 | 1. Topics (选题) | Trend signals (terms spreading across sources, weighted by HN points / stars) + a summary of your own AI usage → 5–10 topic suggestions, each with *why now*, *your experience*, an angle, format and score. **You pick.** | **Topics** page, `xdraft suggest` |
 | 2. Write (撰写) | A thread of 3–8 tweets (or one tweet if you choose), in Chinese and English, built on **your take** if you typed one, with **your real writing** as examples and the full text of the articles | "Write this" / `xdraft write ID --take "…"` |
 | 3. Polish (润色) | A de-AI pass: compares each sentence with your real writing and rewrites what doesn't sound like you; gives 2–3 alternative openings | automatic |
@@ -172,7 +172,7 @@ Approved drafts go into the next free slot from `publish.slots` (in `timezone`, 
 | `claude_code` | `~/.claude/projects/*/*.jsonl` | session: project, models, tool counts, your prompts |
 | `notes` | `notes/inbox/*.md` (optional YAML frontmatter: `title`, `date`, `tags`, `url`) | note |
 | `git` | `git log` of repos in `config.yaml` | repo × day |
-| `articles` | RSS/Atom feeds (AI blogs, arXiv, Reddit, Product Hunt, 36Kr, 少数派), Hacker News stories above `min_points` (all tech by default), new GitHub repos gaining stars fastest | article / repo |
+| `articles` | RSS/Atom feeds (AI blogs, arXiv, Product Hunt, 36Kr, 少数派), Hacker News stories above `min_points` (all tech by default), new GitHub repos gaining stars fastest | article / repo |
 
 ## Privacy and safety
 
