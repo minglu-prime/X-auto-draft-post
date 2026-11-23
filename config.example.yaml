@@ -1,0 +1,57 @@
+# Copy to config.yaml (git-ignored) and adjust.
+# Relative paths are resolved against the folder this file lives in.
+
+db_path: data/xdraft.db
+lookback_days: 3
+
+claude_code:
+  enabled: true
+  projects_dir: ~/.claude/projects
+  # fnmatch globs on the project folder name; empty include = all projects.
+  include_projects: []
+  exclude_projects: ["*private*", "*client*"]
+  max_prompts_per_session: 15
+  max_prompt_chars: 400
+  min_user_prompts: 1
+
+notes:
+  enabled: true
+  inbox_dir: notes/inbox
+
+git:
+  enabled: true
+  repos:
+    - ~/code/X-auto-draft-post
+  # Passed to `git log --author` (OR-ed); empty = all authors.
+  authors: []
+
+articles:
+  enabled: true
+  # Leave out to use the built-in AI keyword list.
+  # keywords: [LLM, Claude, GPT, Gemini, agent]
+  fetch_fulltext: false          # needs: pip install 'xdraft[fulltext]'
+  hackernews:
+    enabled: true
+    min_points: 100
+  # Feed URLs change; if one errors, check the site for its current feed.
+  feeds:
+    - name: Simon Willison
+      url: https://simonwillison.net/atom/everything/
+      filter: true
+    - name: OpenAI News
+      url: https://openai.com/news/rss.xml
+      filter: false
+    - name: Google DeepMind
+      url: https://deepmind.google/blog/rss.xml
+      filter: false
+    - name: Hugging Face Blog
+      url: https://huggingface.co/blog/feed.xml
+      filter: false
+    - name: arXiv cs.CL
+      url: https://rss.arxiv.org/rss/cs.CL
+      filter: true
+      max_items: 50
+
+redaction:
+  # Extra regexes replaced with [REDACTED] in everything collected.
+  extra_patterns: []
