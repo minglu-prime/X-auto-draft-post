@@ -48,10 +48,22 @@ def test_guard_blocks_foreign_host_and_missing_header(setup):
     assert client.get("/").status_code == 200
 
 
+def test_stepper_starts_at_collect_on_empty_db(cfg):
+    client = TestClient(create_app(cfg, llm_factory=FakeLLM, start_scheduler=False, allowed_hosts=("testserver",)))
+    html = client.get("/").text
+    assert 'data-current="collect"' in html and "收集素材" in html
+
+
+def test_stepper_points_to_review_when_drafts_wait(setup):
+    client, *_ = setup
+    html = client.get("/").text
+    assert 'data-current="review"' in html and "待审稿" in html
+
+
 def test_index_shows_drafts(setup):
     client, *_ = setup
     html = client.get("/").text
-    assert "Refactors" in html and "四十个文件" in html and "Dry run" in html
+    assert "Refactors" in html and "四十个文件" in html and "演练模式" in html
     for page in ("/sources", "/inbox", "/history"):
         assert client.get(page).status_code == 200
 
@@ -59,7 +71,7 @@ def test_index_shows_drafts(setup):
 def test_save_splits_thread_and_rechecks(setup):
     client, _llm, engine, ids = setup
     r = client.post(f"/drafts/{ids[1]}/save", data={"body": "first 99% claim\n---\nsecond"}, headers=H)
-    assert r.status_code == 200 and "Saved" in r.text
+    assert r.status_code == 200 and "已保存" in r.text
     d = _get(engine, ids[1])
     assert d.tweets == ["first 99% claim", "second"] and d.edited
     assert any("99%" in w for w in d.warnings)
@@ -68,7 +80,7 @@ def test_save_splits_thread_and_rechecks(setup):
 def test_approve_now_is_dry_run(setup):
     client, _llm, engine, ids = setup
     r = client.post(f"/drafts/{ids[0]}/approve", data={"mode": "now"}, headers=H)
-    assert "Dry run" in r.text
+    assert "演练模式" in r.text
     assert _get(engine, ids[0]).status == DraftStatus.DRY_RUN
 
 
@@ -77,7 +89,7 @@ def test_schedule_converts_local_time(setup):
     # UTC+8 browser: getTimezoneOffset() = -480
     r = client.post(f"/drafts/{ids[0]}/approve",
                     data={"mode": "custom", "when": "2030-01-02T09:30", "tz_offset": "-480"}, headers=H)
-    assert "Scheduled for Wed 01-02 09:30 (Asia/Shanghai)" in r.text
+    assert "已排期：周三 01-02 09:30（Asia/Shanghai）" in r.text
     assert _get(engine, ids[0]).scheduled_at.hour == 1  # stored as 01:30 UTC
     client.post(f"/drafts/{ids[0]}/unschedule", headers=H)
     assert _get(engine, ids[0]).status == DraftStatus.PENDING
@@ -93,7 +105,7 @@ def test_rewrite_uses_llm(setup):
     client, llm, engine, ids = setup
     llm.replies.append(PostVersion(tweets=["shorter"], source_urls=[]))
     r = client.post(f"/drafts/{ids[1]}/rewrite", data={"preset": "shorter"}, headers=H)
-    assert "Rewritten" in r.text and _get(engine, ids[1]).tweets == ["shorter"]
+    assert "已改写" in r.text and _get(engine, ids[1]).tweets == ["shorter"]
     system, user, _ = llm.calls[-1]
     assert "English" in system and "Make it shorter" in user and "40 files" in user
 
@@ -101,7 +113,7 @@ def test_rewrite_uses_llm(setup):
 def test_inbox_writes_note(setup, cfg):
     client, *_ = setup
     r = client.post("/inbox", data={"title": "Hot take", "body": "agents need evals", "tags": "agents, evals"}, headers=H)
-    assert "Saved" in r.text
+    assert "已保存" in r.text
     (note,) = cfg.resolve_path(cfg.notes.inbox_dir).glob("*.md")
     text = note.read_text()
     assert "tags: [agents, evals]" in text and "# Hot take" in text
@@ -112,7 +124,7 @@ def test_approve_uses_next_free_slot(setup):
     first = client.post(f"/drafts/{ids[0]}/approve", data={"mode": "slot"}, headers=H)
     second = client.post(f"/drafts/{ids[1]}/approve", data={"mode": "slot"}, headers=H)
     a, b = _get(engine, ids[0]).scheduled_at, _get(engine, ids[1]).scheduled_at
-    assert "Scheduled for" in first.text and "Scheduled for" in second.text
+    assert "已排期" in first.text and "已排期" in second.text
     assert a != b and {a.hour, b.hour} <= {1, 12}  # 09:00 / 20:00 Asia/Shanghai, one post per slot
 
 
@@ -124,9 +136,13 @@ def test_suggest_then_write_topic(setup):
         title="Agents and plans", angle="A", why_now="W", my_connection="M", format="thread", score=60,
         item_ids=[item_id], trend_terms=["agents"])]))
     r = client.post("/suggest", data={"days": "3"}, headers=H)
-    assert r.status_code == 204 and r.headers["X-Redirect"] == "/topics"
-    page = client.get("/topics").text
-    assert "Agents and plans" in page and "Your AI usage" in page
+    assert r.status_code == 204 and r.headers["X-Redirect"] == "/#topics"
+    old = client.get("/topics", follow_redirects=False)
+    assert old.status_code == 307 and old.headers["location"] == "/#topics"
+    page = client.get("/").text
+    assert "生成了 1 个选题" in page  # one-shot flash after the redirect
+    assert "Agents and plans" in page and "你的 AI 使用情况" in page
+    assert "生成了 1 个选题" not in client.get("/").text
     with Session(engine) as s:
         topic = s.exec(select(Topic).where(Topic.title == "Agents and plans")).one()
     llm.replies += [
@@ -135,7 +151,8 @@ def test_suggest_then_write_topic(setup):
                        en=OptimizedVersion(tweets=["english final"], alt_hooks=["another opening"])),
     ]
     r = client.post(f"/topics/{topic.id}/write", data={"take": "Review is the bottleneck", "format": "quick"}, headers=H)
-    assert "Written, polished and optimized" in r.text
+    assert r.status_code == 204 and r.headers["X-Redirect"] == "/#drafts"
+    assert "已写好 2 篇草稿" in client.get("/").text
     with Session(engine) as s:
         en = s.exec(select(Draft).where(Draft.topic_id == topic.id, Draft.lang == "en")).one()
         t = s.get(Topic, topic.id)
@@ -143,11 +160,11 @@ def test_suggest_then_write_topic(setup):
     assert "Review is the bottleneck" in llm.calls[-2][1] and "one tweet" in llm.calls[-2][0]
     assert en.stage == "optimized" and en.tweets == ["english final"]
     r = client.post(f"/drafts/{en.id}/hook", data={"index": "0"}, headers=H)
-    assert "Hook swapped" in r.text
+    assert "开头已替换" in r.text
     en = _get(engine, en.id)
     assert en.tweets == ["another opening"] and en.alt_hooks == ["english final"]
     html = client.get("/").text
-    assert "Other openings" in html and "earlier versions" in html
+    assert "其它开头" in html and "历史版本" in html
 
 
 def test_dismiss_topic(setup):

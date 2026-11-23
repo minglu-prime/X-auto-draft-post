@@ -1,31 +1,38 @@
 <!doctype html>
-<html lang="en">
+<html lang="zh-CN">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>xdraft — {% block title %}queue{% endblock %}</title>
-<link rel="stylesheet" href="/static/style.css">
-<script src="/static/app.js" defer></script>
+<title>xdraft · {% block title %}工作台{% endblock %}</title>
+<link rel="stylesheet" href="/static/style.css?v={{ asset_v }}">
+<script src="/static/app.js?v={{ asset_v }}" defer></script>
 </head>
 <body>
+<div id="busy-bar" hidden></div>
 <header class="top">
   <strong class="brand">xdraft</strong>
+  {% set path = request.url.path %}
   <nav>
-    <a href="/topics" {% if request.url.path == '/topics' %}class="on"{% endif %}>1 Topics</a>
-    <a href="/" {% if request.url.path == '/' %}class="on"{% endif %}>2 Drafts</a>
-    <a href="/sources" {% if request.url.path == '/sources' %}class="on"{% endif %}>Sources</a>
-    <a href="/inbox" {% if request.url.path == '/inbox' %}class="on"{% endif %}>Inbox</a>
-    <a href="/history" {% if request.url.path == '/history' %}class="on"{% endif %}>History</a>
+    <a href="/" {% if path == '/' %}class="on"{% endif %}>工作台</a>
+    <a href="/sources" {% if path == '/sources' %}class="on"{% endif %}>素材</a>
+    <a href="/inbox" {% if path == '/inbox' %}class="on"{% endif %}>笔记与文风</a>
+    <a href="/history" {% if path == '/history' %}class="on"{% endif %}>已发布</a>
   </nav>
   <div class="status">
-    {% if cfg.publish.enabled %}<span class="badge live">LIVE posting</span>{% else %}<span class="badge dry">Dry run</span>{% endif %}
+    {% if cfg.publish.enabled %}<span class="badge live" title="批准后会真的发到 X">真实发布</span>
+    {% else %}<span class="badge dry" title="config.yaml 里 publish.enabled 为 false：只记录，不会真的发到 X">演练模式（不会真发）</span>{% endif %}
     {% if x.connected %}
-      <span class="badge ok">X connected</span>
-      <form data-post action="/x/logout" class="inline"><button class="link">disconnect</button></form>
-    {% elif x.client_id_set %}<a class="badge" href="/x/login">Connect X</a>
-    {% else %}<span class="badge muted" title="Set X_CLIENT_ID in .env">X not configured</span>{% endif %}
+      <span class="badge ok">X 已连接</span>
+      <form data-post action="/x/logout" class="inline"><button class="link">断开</button></form>
+    {% elif x.client_id_set %}<a class="badge" href="/x/login">连接 X</a>
+    {% else %}<span class="badge muted" title="在 .env 里填 X_CLIENT_ID">X 未配置</span>{% endif %}
   </div>
 </header>
-<main>{% block content %}{% endblock %}</main>
+<main>
+{% set flashes = take_flash() %}
+{% if flashes %}<div class="result flash">{% for m in flashes %}{{ m|safe }}{% endfor %}</div>{% endif %}
+{% block content %}{% endblock %}
+</main>
+<div id="toasts" aria-live="polite"></div>
 </body>
 </html>

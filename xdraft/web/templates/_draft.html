@@ -1,10 +1,11 @@
 <article class="draft status-{{ d.status }}" id="draft-{{ d.id }}" data-swap>
   <header>
-    <span class="lang">{{ 'Chinese' if d.lang == 'zh' else 'English' }}</span>
-    <span class="badge st-{{ d.status }}">{{ d.status.replace('_', ' ') }}</span>
-    <span class="stages" title="pipeline stage reached">{% for st in ('written', 'polished', 'optimized') %}<span class="{{ 'done' if st in (d.revisions or [])|map(attribute='stage')|list or st == d.stage else '' }}">{{ st }}</span>{% endfor %}</span>
-    {% if d.edited %}<span class="muted">edited</span>{% endif %}
-    {% if d.status == 'scheduled' and d.scheduled_at %}<span class="muted">→ {{ d.scheduled_at|local('%a %m-%d %H:%M') }}</span>{% endif %}
+    <span class="lang">{{ '中文' if d.lang == 'zh' else '英文' }}</span>
+    <span class="badge st-{{ d.status }}">{{ status_zh.get(d.status, d.status) }}</span>
+    {% set reached = (d.revisions or [])|map(attribute='stage')|list %}
+    <span class="stages" title="AI 流程进度">{% for st in ('written', 'polished', 'optimized') %}<span class="{{ 'done' if st in reached or st == d.stage else '' }}">{{ stage_zh[st] }}</span>{% endfor %}</span>
+    {% if d.edited %}<span class="muted">已手动修改</span>{% endif %}
+    {% if d.status == 'scheduled' and d.scheduled_at %}<span class="when">⏰ {{ d.scheduled_at|local_day }}</span>{% endif %}
     <span class="muted right">#{{ d.id }}</span>
   </header>
   {% if message %}<p class="ok">{{ message }}</p>{% endif %}
@@ -15,55 +16,67 @@
     <textarea name="body" rows="{{ 3 + d.text|length // 60 }}" data-counter="#count-{{ d.id }}">{{ d.tweets|join('\n---\n') }}</textarea>
     <div class="row">
       <span class="counter" id="count-{{ d.id }}">{% for t in d.tweets %}{% set n = weighted_length(t) %}<span class="{{ 'over' if n > MAX_WEIGHTED else '' }}">{{ n }}/{{ MAX_WEIGHTED }}</span>{% endfor %}</span>
-      <span class="muted hint">separate thread tweets with a line of ---</span>
-      <button>Save</button>
+      <span class="muted hint">串推的每一条之间用单独一行 --- 隔开</span>
+      <button>保存修改</button>
     </div>
   </form>
   {% else %}
   <div class="tweets">{% for t in d.tweets %}<p>{{ t }}</p>{% endfor %}</div>
   {% endif %}
 
-  {% if d.alt_hooks and d.status in ('pending', 'failed') %}
-  <div class="hooks"><span class="muted">Other openings:</span>
-    {% for h in d.alt_hooks %}<form data-post action="/drafts/{{ d.id }}/hook" class="hook"><input type="hidden" name="index" value="{{ loop.index0 }}"><button class="link" title="use this opening line">{{ h }}</button></form>{% endfor %}
-  </div>
-  {% endif %}
   {% if d.warnings %}<ul class="warnings">{% for w in d.warnings %}<li>{{ w }}</li>{% endfor %}</ul>{% endif %}
-  {% if d.revisions and d.revisions|length > 1 %}
-  <details class="revisions"><summary class="muted">earlier versions</summary>
-    {% for r in d.revisions[:-1] %}<div><b>{{ r.stage }}</b>{% if r.notes %} <span class="muted">— {{ r.notes }}</span>{% endif %}{% for t in r.tweets %}<p>{{ t }}</p>{% endfor %}</div>{% endfor %}
-  </details>
-  {% endif %}
-  {% if d.source_urls %}<p class="sources">{% for u in d.source_urls %}<a href="{{ u }}" target="_blank" rel="noopener noreferrer">{{ u }}</a> {% endfor %}</p>{% endif %}
 
   {% if d.status in ('pending', 'failed') %}
-  <form data-post action="/drafts/{{ d.id }}/rewrite" class="row">
-    <select name="preset">{% for k, v in presets.items() %}<option value="{{ k }}">{{ k }}</option>{% endfor %}</select>
-    <input name="instruction" placeholder="or your own instruction…">
-    <button>Rewrite with AI</button>
-  </form>
   {% set slot = next_slot_label() %}
   <div class="row actions">
     <form data-post action="/drafts/{{ d.id }}/approve">
       <input type="hidden" name="mode" value="slot">
-      <button class="primary" {% if not slot %}disabled{% endif %}>Approve → {{ slot or 'no free slot' }}</button>
+      <button class="primary" {% if not slot %}disabled title="没有空闲时段"{% endif %}>批准 → {{ slot or '无空闲时段' }}</button>
     </form>
-    <form data-post action="/drafts/{{ d.id }}/approve" data-confirm="{{ 'Post this to X now?' if cfg.publish.enabled else '' }}">
-      <input type="hidden" name="mode" value="now"><button>Post now</button>
-    </form>
-    <form data-post action="/drafts/{{ d.id }}/approve" class="row">
-      <input type="hidden" name="mode" value="custom">
-      <input type="datetime-local" name="when" required><input type="hidden" name="tz_offset" value="0">
-      <button>Schedule</button>
-    </form>
-    <form data-post action="/drafts/{{ d.id }}/reject"><button class="danger">Reject</button></form>
+    <form data-post action="/drafts/{{ d.id }}/reject"><button class="danger">驳回</button></form>
   </div>
   {% elif d.status == 'scheduled' %}
   <div class="row actions">
-    <form data-post action="/drafts/{{ d.id }}/unschedule"><button>Unschedule</button></form>
-    <form data-post action="/drafts/{{ d.id }}/reject"><button class="danger">Reject</button></form>
+    <form data-post action="/drafts/{{ d.id }}/unschedule"><button>取消排期</button></form>
+    <form data-post action="/drafts/{{ d.id }}/reject"><button class="danger">驳回</button></form>
   </div>
   {% elif d.status == 'published' and d.tweet_ids %}
-  <p><a href="https://x.com/i/web/status/{{ d.tweet_ids[0] }}" target="_blank" rel="noopener noreferrer">View on X</a></p>
+  <p><a href="https://x.com/i/web/status/{{ d.tweet_ids[0] }}" target="_blank" rel="noopener noreferrer">在 X 上查看</a></p>
+  {% endif %}
+
+  {% set has_hooks = d.alt_hooks and d.status in ('pending', 'failed') %}
+  {% set has_revs = d.revisions and d.revisions|length > 1 %}
+  {% if d.status in ('pending', 'failed') or has_revs or d.source_urls %}
+  <details class="more">
+    <summary>更多操作{% if has_hooks %}（有 {{ d.alt_hooks|length }} 个备选开头）{% endif %}</summary>
+    {% if d.status in ('pending', 'failed') %}
+    <div class="row actions">
+      <form data-post action="/drafts/{{ d.id }}/approve" data-confirm="{{ '确定现在就发到 X？' if cfg.publish.enabled else '' }}">
+        <input type="hidden" name="mode" value="now"><button>立即发布</button>
+      </form>
+      <form data-post action="/drafts/{{ d.id }}/approve" class="row">
+        <input type="hidden" name="mode" value="custom">
+        <input type="datetime-local" name="when" required><input type="hidden" name="tz_offset" value="0">
+        <button>按这个时间排期</button>
+      </form>
+    </div>
+    <form data-post action="/drafts/{{ d.id }}/rewrite" class="row">
+      <select name="preset">{% for k in presets %}<option value="{{ k }}">{{ preset_zh.get(k, k) }}</option>{% endfor %}</select>
+      <input name="instruction" placeholder="或者写你自己的要求…">
+      <button data-busy="AI 改写中，通常 20–60 秒">AI 改写</button>
+    </form>
+    {% endif %}
+    {% if has_hooks %}
+    <div class="hooks"><span class="muted">其它开头（点一下替换第一句）：</span>
+      {% for h in d.alt_hooks %}<form data-post action="/drafts/{{ d.id }}/hook" class="hook"><input type="hidden" name="index" value="{{ loop.index0 }}"><button class="link" title="用这个开头">{{ h }}</button></form>{% endfor %}
+    </div>
+    {% endif %}
+    {% if has_revs %}
+    <details class="revisions"><summary class="muted">历史版本</summary>
+      {% for r in d.revisions[:-1] %}<div><b>{{ stage_zh.get(r.stage, r.stage) }}</b>{% if r.notes %} <span class="muted">— {{ r.notes }}</span>{% endif %}{% for t in r.tweets %}<p>{{ t }}</p>{% endfor %}</div>{% endfor %}
+    </details>
+    {% endif %}
+    {% if d.source_urls %}<p class="sources">来源：{% for u in d.source_urls %}<a href="{{ u }}" target="_blank" rel="noopener noreferrer">{{ u }}</a> {% endfor %}</p>{% endif %}
+  </details>
   {% endif %}
 </article>

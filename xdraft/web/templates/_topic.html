@@ -1,19 +1,19 @@
 <article class="topic-card status-{{ t.status }}" data-swap>
   <header>
     <h3>{{ t.title }}</h3>
-    <span class="score" title="interest × fit">{{ t.score }}</span>
-    <span class="badge">{{ t.format }}</span>
+    <span class="score" title="兴趣 × 匹配度">{{ t.score }}</span>
+    <span class="badge">{{ '串推' if t.format == 'thread' else '单条' }}</span>
   </header>
-  {% if message %}<p class="ok">{{ message }} — <a href="/">open Drafts</a></p>{% endif %}
+  {% if message %}<p class="ok">{{ message }}</p>{% endif %}
   {% if error %}<p class="warn">{{ error }}</p>{% endif %}
   <dl>
-    <dt>Angle</dt><dd>{{ t.angle }}</dd>
-    <dt>Why now</dt><dd>{{ t.why }}</dd>
-    {% if t.my_connection %}<dt>Your experience</dt><dd>{{ t.my_connection }}</dd>{% endif %}
-    {% if t.user_take and t.status != 'suggested' %}<dt>Your take</dt><dd>{{ t.user_take }}</dd>{% endif %}
+    <dt>切入角度</dt><dd>{{ t.angle }}</dd>
+    {% if t.why %}<dt>为什么是现在</dt><dd>{{ t.why }}</dd>{% endif %}
+    {% if t.my_connection %}<dt>你的经历</dt><dd>{{ t.my_connection }}</dd>{% endif %}
+    {% if t.user_take and t.status != 'suggested' %}<dt>你的观点</dt><dd>{{ t.user_take }}</dd>{% endif %}
   </dl>
   {% if t.trend_terms %}<ul class="chips small">{% for term in t.trend_terms %}<li>{{ term }}</li>{% endfor %}</ul>{% endif %}
-  <details class="items"><summary>{{ topic_items|length }} sources</summary>
+  <details class="items"><summary class="muted">{{ topic_items|length }} 条来源素材</summary>
     <ul>{% for it in topic_items %}
       <li><span class="src src-{{ it.source }}">{{ (it.meta or {}).get('feed') or it.source }}</span>
         {% if it.url %}<a href="{{ it.url }}" target="_blank" rel="noopener noreferrer">{{ it.title }}</a>{% else %}{{ it.title }}{% endif %}</li>
@@ -21,15 +21,15 @@
   </details>
   {% if t.status == 'suggested' %}
   <form data-post action="/topics/{{ t.id }}/write" class="take">
-    <textarea name="take" rows="3" placeholder="Your take (optional, but the best way to avoid AI-sounding posts): what do YOU think about this? A few rough sentences are enough.">{{ t.user_take or '' }}</textarea>
+    <textarea name="take" rows="3" placeholder="你的观点（可选，但这是避免 AI 味最有效的办法）：你自己怎么看？随手写几句就行。">{{ t.user_take or '' }}</textarea>
     <div class="row actions">
-      <select name="format" title="thread = 3–8 tweets">
-        <option value="thread" {% if t.format != 'quick' %}selected{% endif %}>Thread</option>
-        <option value="quick" {% if t.format == 'quick' %}selected{% endif %}>Single tweet</option>
+      <select name="format" title="串推 = 3–6 条连发">
+        <option value="thread" {% if t.format != 'quick' %}selected{% endif %}>串推</option>
+        <option value="quick" {% if t.format == 'quick' %}selected{% endif %}>单条推文</option>
       </select>
-      <button class="primary" title="write → polish → fix, zh + en">Write this</button>
+      <button class="primary" data-busy="AI 写稿中（初稿→润色→优化），通常 1–2 分钟">写这篇（中英各一篇）</button>
+      <button class="link right" formaction="/topics/{{ t.id }}/dismiss" formnovalidate>不要这个选题</button>
     </div>
   </form>
-  <form data-post action="/topics/{{ t.id }}/dismiss"><button>Dismiss</button></form>
   {% endif %}
 </article>

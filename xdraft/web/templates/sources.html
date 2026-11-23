@@ -1,24 +1,25 @@
 {% extends "base.html" %}
-{% block title %}sources{% endblock %}
+{% block title %}素材{% endblock %}
 {% block content %}
 <section class="toolbar">
   <form data-post action="/collect" data-target="#run-result">
-    <label>Days <input type="number" name="days" min="1" max="60" value="{{ cfg.lookback_days }}"></label>
-    <button>Collect now</button>
+    <input type="hidden" name="back" value="/sources">
+    <label>回看天数 <input type="number" name="days" min="1" max="60" value="{{ cfg.lookback_days }}"></label>
+    <button data-busy="正在收集素材">立即收集</button>
   </form>
 </section>
 <div id="run-result" class="result"></div>
 <table class="history">
-  <thead><tr><th>Source</th><th>Items</th><th>Newest</th></tr></thead>
+  <thead><tr><th>来源</th><th>条数</th><th>最新一条</th></tr></thead>
   <tbody>{% for source, n, newest in stats %}
     <tr><td><span class="src src-{{ source }}">{{ source }}</span></td><td class="num">{{ n }}</td><td>{{ newest.strftime('%Y-%m-%d %H:%M') if newest else '' }}</td></tr>
-  {% else %}<tr><td colspan="3" class="muted">Nothing collected yet.</td></tr>{% endfor %}</tbody>
+  {% else %}<tr><td colspan="3" class="muted">还没有收集过素材。点上面的「立即收集」。</td></tr>{% endfor %}</tbody>
 </table>
-<h2>Latest items</h2>
+<h2>最新素材</h2>
 <ul class="itemlist">{% for it in items %}
   <li><span class="src src-{{ it.source }}">{{ it.source }}</span>
     {% if it.url %}<a href="{{ it.url }}" target="_blank" rel="noopener noreferrer">{{ it.title }}</a>{% else %}{{ it.title }}{% endif %}
     <span class="muted">{{ it.ts.strftime('%m-%d %H:%M') }}</span>
-    <details><summary class="muted">details</summary><pre>{{ it.body }}</pre></details></li>
+    <details><summary class="muted">详情</summary><pre>{{ it.body }}</pre></details></li>
 {% endfor %}</ul>
 {% endblock %}

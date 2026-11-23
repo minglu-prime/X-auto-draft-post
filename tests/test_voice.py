@@ -66,9 +66,9 @@ def test_style_import_saves_posts_even_with_existing_style(tmp_path, monkeypatch
 
 def test_inbox_voice_form(cfg):
     client = TestClient(create_app(cfg, start_scheduler=False, allowed_hosts=("testserver",)))
-    assert "Voice" in client.get("/inbox").text
+    assert "文风" in client.get("/inbox").text
     r = client.post("/voice", data={"kind": "mine", "text": "a post I wrote\n---\nanother one I wrote"},
                     headers={"X-Xdraft": "1"})
-    assert "Now 2 pieces of your writing" in r.text
+    assert "现在有 2 篇你自己的文字" in r.text
     r = client.post("/voice", data={"kind": "mine", "text": ""}, headers={"X-Xdraft": "1"})
-    assert "Paste some text" in r.text
+    assert "请粘贴文字" in r.text
