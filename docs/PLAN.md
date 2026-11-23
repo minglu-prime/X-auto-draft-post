@@ -65,7 +65,7 @@ tests/  (fixtures: sample Claude Code jsonl, RSS xml)
 
 ## Verification
 - `pytest`: each collector parses its fixtures; redaction tests (sample jsonl containing a fake key must have it removed); character-count/thread-splitting tests; dry-run publish tests (tweepy mocked).
-- End to end: `xdraft collect && xdraft draft` against real `~/.claude/projects` → `xdraft serve` → open 127.0.0.1:8000 in a browser to check the draft queue → approve one → it shows up in the log as a dry-run post → after enabling `PUBLISH_ENABLED` and posting one test post to a test account, check it on X.
+- End to end: `xdraft collect`, then `xdraft suggest` and `xdraft write` against real `~/.claude/projects` → `xdraft serve` → open 127.0.0.1:8000 in a browser to check the draft queue → approve one → it shows up in the log as a dry-run post → after enabling `PUBLISH_ENABLED` and posting one test post to a test account, check it on X.
 - Note: this cloud session can't access the Claude Code logs on your machine, so M1 is developed against fixtures here; real-data checks run on your machine.
 
 ## Content pipeline (added after M5)
