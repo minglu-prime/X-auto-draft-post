@@ -16,14 +16,14 @@ See [docs/PLAN.md](docs/PLAN.md) for the design and the survey of similar projec
 | 5. Review | Edit, swap in an alternative opening, AI rewrite, see earlier versions | **Drafts** page |
 | 6. Publish (发布) | Approve → next free posting slot (default 09:00 and 20:00 local time) → posted to X (dry run until enabled); engagement is fed back into step 1 | automatic |
 
-With `xdraft serve` running, steps 0–1 run every day at `pipeline.auto_suggest_at` (default 08:30 local time) and approved posts publish on their own. Without the dashboard, put `xdraft run` (collect + suggest + publish due) in cron.
+With `xdraft serve` running, steps 0–1 run every day at `pipeline.auto_suggest_at` (default 08:30 local time) and approved posts publish on their own. If you don't keep the dashboard open, `uv run xdraft schedule install` sets up Windows Task Scheduler to do the same.
 
 ## Status
 
 | Milestone | State |
 |---|---|
 | M1 collectors (`xdraft collect`) | ✅ |
-| M2 draft generation with DeepSeek / OpenAI (`xdraft draft`) | ✅ |
+| M2 draft generation with DeepSeek / OpenAI | ✅ |
 | M3 local review dashboard (`xdraft serve`) | ✅ |
 | M4 publishing to X: OAuth 2.0, threads, scheduling, dry run by default | ✅ |
 | M5 style import from your X archive + engagement feedback | ✅ |
@@ -31,25 +31,61 @@ With `xdraft serve` running, steps 0–1 run every day at `pipeline.auto_suggest
 
 ## Setup
 
-```bash
+All commands below are written for **Windows PowerShell** and run as-is there. Run them one at a time.
+
+You need [uv](https://docs.astral.sh/uv/) and git. To install uv on Windows:
+
+```powershell
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+```
+
+Then:
+
+```powershell
+git clone https://github.com/minglu-prime/X-auto-draft-post.git
+```
+
+```powershell
+cd X-auto-draft-post
+```
+
+```powershell
 uv sync
-cp config.example.yaml config.yaml   # edit git repos, feeds, LLM provider
-cp .env.example .env                 # put your API keys here (git-ignored)
+```
+
+```powershell
+uv run xdraft init
+```
+
+`init` creates `config.yaml`, `.env` and `style.md` from the examples (it never overwrites existing ones), plus the `notes\inbox` and `data` folders. Then put your key in `.env`:
+
+```powershell
+notepad .env
+```
+
+and set `git.repos` (your local repo paths, e.g. `C:\Users\you\code\my-project`) in `config.yaml`:
+
+```powershell
+notepad config.yaml
 ```
 
 **LLM**: any OpenAI-compatible API. The default is DeepSeek (`deepseek-chat`, key in `DEEPSEEK_API_KEY`). To use OpenAI, set `llm.provider: openai`, `llm.base_url: null`, `llm.model: <model>` and `llm.api_key_env: OPENAI_API_KEY` in `config.yaml`. JSON mode is used and every reply is validated.
 
-**Style** (optional but recommended): `cp style.example.md style.md` and edit, or learn it from your X archive (Settings → Your account → Download an archive):
+**Claude Code logs** are read from `~/.claude/projects`, which on Windows is `%USERPROFILE%\.claude\projects`. Nothing to configure.
 
-```bash
-uv run xdraft style-import ~/Downloads/twitter-archive
+**Style** (optional but recommended): edit `style.md`, or learn it from your X archive (Settings → Your account → Download an archive, then unzip it):
+
+```powershell
+uv run xdraft style-import "$HOME\Downloads\twitter-archive" --force
 ```
 
 ## Daily use
 
-```bash
-uv run xdraft serve        # http://127.0.0.1:8000
+```powershell
+uv run xdraft serve
 ```
+
+Then open http://127.0.0.1:8000 in your browser. Stop the dashboard with `Ctrl+C`.
 
 In the dashboard:
 
@@ -57,31 +93,53 @@ In the dashboard:
 2. **Drafts**: each picked topic has a Chinese and an English card that went through write → polish → optimize. Edit inline (a line of `---` separates thread tweets), click an alternative opening to swap it in, or use **Rewrite with AI**. Then **Approve → next slot**, **Post now**, a custom **Schedule**, or **Reject**.
 3. **Inbox** saves quick notes, which are the strongest signal for topic choice. **History** shows what was posted, with likes, reposts, replies and views.
 
-The same flow from the terminal:
+The same flow from the terminal, one command at a time:
 
-```bash
-uv run xdraft collect                 # gather the last 3 days
-uv run xdraft suggest                 # trends + usage → topic suggestions (add --collect to do both)
-uv run xdraft topics                  # list suggestions
-uv run xdraft write 12 15             # write → polish → optimize the picked topics
-uv run xdraft drafts                  # list pending drafts
-uv run xdraft run                     # cron: collect + suggest + publish due posts
-uv run xdraft publish-due             # post approved drafts that are due
-uv run xdraft metrics                 # refresh engagement numbers
-```
+| Command | What it does |
+|---|---|
+| `uv run xdraft collect` | gather the last 3 days of material |
+| `uv run xdraft suggest` | trends + your usage → topic suggestions (`--collect` collects first) |
+| `uv run xdraft topics` | list suggestions with their ids |
+| `uv run xdraft write 12 15` | write → polish → optimize topics 12 and 15 |
+| `uv run xdraft drafts` | list pending drafts |
+| `uv run xdraft run` | collect + suggest + publish due posts (what the daily task runs) |
+| `uv run xdraft publish-due` | post approved drafts that are due |
+| `uv run xdraft metrics` | refresh engagement numbers |
 
 A picked topic costs 3–5 LLM calls (write, polish, 1–3 optimize passes); a suggestion run costs 1. Each draft is checked against X's weighted length (CJK counts double, URLs count 23), links that are not in the sources, numbers that are not in the sources, near-duplicates of recent posts, and leaked secrets or emails. Drafts over 280 cannot be approved.
 
+### Running without the dashboard open
+
+`xdraft serve` already runs everything on schedule while it is open. To have it run without the dashboard, register two Windows scheduled tasks: a daily collect + suggest at `pipeline.auto_suggest_at`, and publishing every 5 minutes. They run windowless and log to `data\scheduled.log`.
+
+```powershell
+uv run xdraft schedule install
+```
+
+Check what is registered (or see the exact commands first):
+
+```powershell
+uv run xdraft schedule show
+```
+
+Remove both tasks:
+
+```powershell
+uv run xdraft schedule remove
+```
+
+Task times use your PC's clock, so keep `timezone` in `config.yaml` the same as your Windows time zone. On macOS or Linux, `uv run xdraft schedule show` prints the matching crontab lines instead.
+
 ## Posting to X
 
-Publishing is **off by default**. Approving a draft then only writes it to `data/publish.log` and marks it *dry run*.
+Publishing is **off by default**. Approving a draft then only writes it to `data\publish.log` and marks it *dry run*.
 
 1. Create an app at developer.x.com with OAuth 2.0 enabled, type *Web App / native*, permissions **Read and write**, and callback URL `http://127.0.0.1:8000/x/callback`. Check X's current API plan and pricing for posting limits.
 2. Put `X_CLIENT_ID` (and `X_CLIENT_SECRET` for a confidential client) in `.env`.
-3. Run `xdraft serve`, click **Connect X**, and authorize. The token is stored in `data/x_token.json` with mode 600 and refreshed automatically.
-4. Set `publish.enabled: true` in `config.yaml` and restart. The header shows **LIVE posting**.
+3. Run `uv run xdraft serve`, click **Connect X**, and authorize. The token is stored in `data\x_token.json` inside your project folder (readable only by you on macOS/Linux) and refreshed automatically.
+4. Set `publish.enabled: true` in `config.yaml` and restart the dashboard. The header shows **LIVE posting**.
 
-Approved drafts go into the next free slot from `publish.slots` (in `timezone`, at most `max_per_slot` per slot). While `xdraft serve` runs, due drafts are published every minute and metrics refresh every `publish.metrics_every_minutes`. Without the dashboard running, use cron: `*/5 * * * * cd /path/to/repo && uv run xdraft publish-due`, plus a daily `uv run xdraft run`. Threads are posted as replies; if one fails half-way, approving it again resumes where it stopped instead of posting duplicates. On a rate limit (429) the post is rescheduled automatically.
+Approved drafts go into the next free slot from `publish.slots` (in `timezone`, at most `max_per_slot` per slot), and are published within a minute of their slot while the dashboard runs, or within 5 minutes by the scheduled task. Threads are posted as replies; if one fails half-way, approving it again resumes where it stopped instead of posting duplicates. On a rate limit (429) the post is rescheduled automatically.
 
 ## Sources
 
@@ -102,6 +160,6 @@ Approved drafts go into the next free slot from `publish.slots` (in `timezone`, 
 
 ## Development
 
-```bash
+```powershell
 uv run pytest
 ```

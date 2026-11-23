@@ -1,9 +1,11 @@
-"""Command line: `xdraft collect`, `xdraft items`."""
+"""Command line for xdraft. Every command works the same in PowerShell, cmd and bash."""
 
 from __future__ import annotations
 
 import logging
-from datetime import timedelta
+import os
+import sys
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
@@ -27,8 +29,23 @@ ConfigOpt = typer.Option(None, "--config", "-c", help="Path to config.yaml (defa
 
 
 @app.callback()
-def main(verbose: bool = typer.Option(False, "--verbose", "-v")) -> None:
-    logging.basicConfig(level=logging.DEBUG if verbose else logging.WARNING, format="%(levelname)s %(name)s: %(message)s")
+def main(
+    ctx: typer.Context,
+    verbose: bool = typer.Option(False, "--verbose", "-v"),
+    log_file: Optional[Path] = typer.Option(None, "--log-file", help="Append output to this file (used by scheduled tasks)."),
+) -> None:
+    level = logging.DEBUG if verbose else logging.WARNING
+    fmt = "%(asctime)s %(levelname)s %(name)s: %(message)s"
+    console.file = None  # back to stdout (matters when commands run in one process, e.g. tests)
+    if log_file:
+        log_file.parent.mkdir(parents=True, exist_ok=True)
+        console.file = open(log_file, "a", encoding="utf-8")  # noqa: SIM115 - lives for the process
+        console.print(f"--- {datetime.now():%Y-%m-%d %H:%M:%S} xdraft {ctx.invoked_subcommand}", markup=False)
+        logging.basicConfig(level=level, format=fmt, stream=console.file)
+    else:
+        if sys.stdout is None:  # pythonw.exe has no console
+            console.file = open(os.devnull, "w", encoding="utf-8")  # noqa: SIM115
+        logging.basicConfig(level=level, format=fmt)
 
 
 def _check_sources(sources: list[str]) -> None:
@@ -330,6 +347,72 @@ def style_import(
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(text, encoding="utf-8")
     console.print(f"Wrote {out} from {len(tweets)} posts. Review and edit it — drafts follow it closely.")
+
+
+@app.command()
+def init(force: bool = typer.Option(False, "--force", help="Overwrite existing config.yaml / .env / style.md.")) -> None:
+    """First-time setup: create config.yaml, .env and style.md from the examples (run in the repo folder)."""
+    from xdraft.setup_cmds import init_project
+
+    repo = Path.cwd()
+    if not (repo / "config.example.yaml").is_file():
+        console.print("Run this inside the X-auto-draft-post folder (config.example.yaml not found here).")
+        raise typer.Exit(1)
+    for path, what in init_project(repo, force):
+        console.print(f"{path:<14} {what}", markup=False)
+    console.print(
+        "\nNext:\n"
+        "  1. Put your DeepSeek (or OpenAI) key in .env        notepad .env\n"
+        "  2. Set git.repos and anything else in config.yaml   notepad config.yaml\n"
+        "  3. Start the dashboard                              uv run xdraft serve",
+        markup=False,
+    )
+
+
+@app.command()
+def schedule(
+    action: str = typer.Argument("show", help="install | remove | show"),
+    config: Optional[Path] = ConfigOpt,
+) -> None:
+    """Run the pipeline without keeping the dashboard open: Windows Task Scheduler (or cron elsewhere)."""
+    import subprocess
+
+    from xdraft import setup_cmds
+
+    if action not in ("install", "remove", "show"):
+        raise typer.BadParameter("action must be install, remove or show")
+    cfg = load_config(config)
+    cfg_path = (config or Path("config.yaml")).resolve()
+    if not cfg_path.is_file():
+        console.print("config.yaml not found: run `uv run xdraft init` first (in the repo folder).")
+        raise typer.Exit(1)
+    log_path = cfg.resolve_path("data/scheduled.log")
+    jobs = setup_cmds.jobs(cfg)
+
+    if not setup_cmds.is_windows():
+        python = sys.executable
+        console.print("Not on Windows. Add these lines with `crontab -e` (times are this machine's local time):\n")
+        for line in setup_cmds.cron_lines(cfg, cfg_path, log_path, python):
+            console.print(line, markup=False, highlight=False, soft_wrap=True)
+        return
+
+    python = setup_cmds.windowless_python()
+    for job in jobs:
+        command = setup_cmds.task_command(cfg_path, log_path, job, python, windows=True)
+        if action == "install":
+            command = setup_cmds.fit_task_command(command, job, log_path.parent)
+        if action == "show":
+            console.print(f"{job.name}: {job.description}\n  {' '.join(job.windows_schedule)}\n  {command}\n",
+                          markup=False, highlight=False, soft_wrap=True)
+            continue
+        args = (setup_cmds.schtasks_create_args(job, command) if action == "install"
+                else setup_cmds.schtasks_delete_args(job))
+        result = subprocess.run(args, capture_output=True, text=True)
+        status = "ok" if result.returncode == 0 else f"failed: {(result.stderr or result.stdout).strip()}"
+        console.print(f"{action} {job.name}: {status}", markup=False)
+    if action == "install":
+        console.print(f"\nTimes are this PC's local time. Output goes to {log_path}. "
+                      "Remove with: uv run xdraft schedule remove", markup=False)
 
 
 if __name__ == "__main__":

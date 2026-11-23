@@ -1,4 +1,5 @@
 import json
+import os
 import time
 from datetime import timedelta
 from urllib.parse import parse_qs, urlparse
@@ -75,7 +76,9 @@ def test_login_stores_token_privately(cfg, x_env):
     fake, factory = x_env
     _connect(factory)
     path = cfg.resolve_path(cfg.publish.token_path)
-    assert path.stat().st_mode & 0o777 == 0o600
+    assert path.is_file()
+    if os.name != "nt":  # Windows has no POSIX modes; the file lives in the user's own folder
+        assert path.stat().st_mode & 0o777 == 0o600
     assert fake.token_calls[0]["code_verifier"] and fake.token_calls[0]["client_id"] == ["cid"]
 
 
