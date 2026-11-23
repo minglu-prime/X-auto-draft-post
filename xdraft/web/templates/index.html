@@ -9,7 +9,7 @@
 <ol class="steps" data-current="{{ step }}">
   {% for key, label, count, href in steps %}
   <li class="{{ 'now' if key == step else '' }}"><a href="{{ href }}">
-    <span class="num">{{ loop.index }}</span><span class="label">{{ label }}</span><span class="count">{{ count }}</span>
+    <span class="num">{{ '%02d' % loop.index }}</span><span class="label">{{ label }}</span><span class="count">{{ count }}</span>
   </a></li>
   {% endfor %}
 </ol>
