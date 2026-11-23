@@ -10,9 +10,9 @@ See [docs/PLAN.md](docs/PLAN.md) for the design and the survey of similar projec
 |---|---|---|
 | 0. Collect | Your Claude Code sessions, notes, commits; AI blogs, arXiv; **trends**: HN front page, fast-rising GitHub repos, Reddit, Product Hunt, 36Kr / 少数派 | `xdraft collect`, or daily automatically |
 | 1. Topics (选题) | Trend signals (terms spreading across sources, weighted by HN points / stars) + a summary of your own AI usage → 5–10 topic suggestions, each with *why now*, *your experience*, an angle, format and score. **You pick.** | **Topics** page, `xdraft suggest` |
-| 2. Write (撰写) | Chinese + English first drafts in your style | "Write this" / `xdraft write ID` |
-| 3. Polish (润色) | Voice and natural language: no 翻译腔, no hype words, facts unchanged | automatic |
-| 4. Optimize (优化) | Stronger hook, skimmable structure, fixes for every check warning, 2–3 alternative openings; re-runs while length checks still fail | automatic |
+| 2. Write (撰写) | A thread of 3–8 tweets (or one tweet if you choose), in Chinese and English, built on **your take** if you typed one, with **your real writing** as examples and the full text of the articles | "Write this" / `xdraft write ID --take "…"` |
+| 3. Polish (润色) | A de-AI pass: compares each sentence with your real writing and rewrites what doesn't sound like you; gives 2–3 alternative openings | automatic |
+| 4. Optimize (优化) | Fix-only: runs only if checks find problems (too long, unsourced numbers, unknown links, **AI tells** like "不是…而是…" or "isn't X — it's Y") and fixes just those | automatic |
 | 5. Review | Edit, swap in an alternative opening, AI rewrite, see earlier versions | **Drafts** page |
 | 6. Publish (发布) | Approve → next free posting slot (default 09:00 and 20:00 local time) → posted to X (dry run until enabled); engagement is fed back into step 1 | automatic |
 
@@ -73,11 +73,35 @@ notepad config.yaml
 
 **Claude Code logs** are read from `~/.claude/projects`, which on Windows is `%USERPROFILE%\.claude\projects`. Nothing to configure.
 
-**Style** (optional but recommended): edit `style.md`, or learn it from your X archive (Settings → Your account → Download an archive, then unzip it):
+### Make drafts sound like you
+
+Drafts sound like AI when the writer has no idea how *you* write. Give it real examples:
+
+1. **Your X archive** (Settings → Your account → Download an archive, then unzip it). This saves your posts as examples in `voice\mine` and writes a style guide to `style.md`:
 
 ```powershell
-uv run xdraft style-import "$HOME\Downloads\twitter-archive" --force
+uv run xdraft style-import "$HOME\Downloads\twitter-archive"
 ```
+
+2. **Things you wrote elsewhere** (Jike, 小红书, newsletters…): paste them in the dashboard **Inbox → Voice** ("My own writing"), separating pieces with a line of `---`. Or save them in a text file and add it:
+
+```powershell
+uv run xdraft voice add-file "$HOME\Desktop\my-posts.txt"
+```
+
+3. **Writers you like**: paste their text in **Inbox → Voice** ("A writer I like"), or save an article by link (blogs, Substack, Medium; x.com needs login and won't work):
+
+```powershell
+uv run xdraft voice add-url "https://example.com/some-article"
+```
+
+Check what you have; 10–20 pieces of your own writing make the biggest difference:
+
+```powershell
+uv run xdraft voice show
+```
+
+The other big lever is **your take**: when you pick a topic, type two or three rough sentences of what *you* think in the box above "Write this". The post is then built on your opinion instead of one the AI made up.
 
 ## Daily use
 
@@ -100,13 +124,13 @@ The same flow from the terminal, one command at a time:
 | `uv run xdraft collect` | gather the last 3 days of material |
 | `uv run xdraft suggest` | trends + your usage → topic suggestions (`--collect` collects first) |
 | `uv run xdraft topics` | list suggestions with their ids |
-| `uv run xdraft write 12 15` | write → polish → optimize topics 12 and 15 |
+| `uv run xdraft write 12 --take "审核比写代码累"` | write → polish → fix topic 12, built on your take |
 | `uv run xdraft drafts` | list pending drafts |
 | `uv run xdraft run` | collect + suggest + publish due posts (what the daily task runs) |
 | `uv run xdraft publish-due` | post approved drafts that are due |
 | `uv run xdraft metrics` | refresh engagement numbers |
 
-A picked topic costs 3–5 LLM calls (write, polish, 1–3 optimize passes); a suggestion run costs 1. Each draft is checked against X's weighted length (CJK counts double, URLs count 23), links that are not in the sources, numbers that are not in the sources, near-duplicates of recent posts, and leaked secrets or emails. Drafts over 280 cannot be approved.
+A picked topic costs 2–5 LLM calls (write, polish, and 0–3 fix passes only when checks find problems); a suggestion run costs 1. Each draft is checked against X's weighted length (CJK counts double, URLs count 23), links that are not in the sources, numbers that are not in the sources, near-duplicates of recent posts, and leaked secrets or emails. Drafts over 280 cannot be approved.
 
 ### Running without the dashboard open
 

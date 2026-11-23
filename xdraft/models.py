@@ -40,7 +40,8 @@ class Topic(SQLModel, table=True):
     angle: str  # the personal take / hook
     why: str = ""  # why now: the trend evidence
     my_connection: str = ""  # the author's own usage that relates to it
-    format: str = "single"  # single | thread
+    format: str = "thread"  # thread (default) | quick (one tweet)
+    user_take: str = ""  # the author's own opinion, written when picking the topic
     trend_terms: list = Field(default_factory=list, sa_column=Column(JSON))
     status: str = Field(default=TopicStatus.SUGGESTED, index=True)
     score: int = 0

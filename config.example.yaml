@@ -13,6 +13,7 @@ claude_code:
   max_prompts_per_session: 15
   max_prompt_chars: 400
   min_user_prompts: 1
+  last_reply_chars: 600        # keep the session's last assistant message ("what got done")
 
 notes:
   enabled: true
@@ -29,7 +30,7 @@ articles:
   enabled: true
   # AI keyword list used by feeds with `filter: true` (leave out for the built-in list).
   # keywords: [LLM, Claude, GPT, Gemini, agent]
-  fetch_fulltext: false          # needs: pip install 'xdraft[fulltext]'
+  fetch_fulltext: true           # fetch full article text when you pick a topic (only its articles)
   hackernews:
     enabled: true
     min_points: 100
@@ -73,7 +74,9 @@ llm:
   # base_url: null            # SDK default (api.openai.com)
   # model: <an OpenAI chat model that supports JSON mode>
   # api_key_env: OPENAI_API_KEY
-  temperature: 0.7
+  temperature: 0.7            # topic suggestions
+  temperature_write: 1.0      # first drafts: higher = less generic
+  temperature_edit: 0.6       # polish / fixes
 
 # Timezone for posting slots and the daily automatic run.
 timezone: Asia/Shanghai
@@ -85,9 +88,18 @@ pipeline:
   optimize_rounds: 2          # extra optimize passes while length checks fail
   auto_suggest_at: "08:30"    # daily collect + suggest while `xdraft serve` runs; null = off
 
+# Your real writing, used as examples so drafts sound like you (add in the dashboard Inbox,
+# with `uv run xdraft voice add-file`, `voice add-url`, or `style-import`).
+voice:
+  dir: voice
+  own_examples: 10
+  reference_excerpts: 3
+
 draft:
   max_items: 60
-  thread_max_tweets: 5
+  thread_min_tweets: 3        # topics default to threads of 3-8 tweets
+  thread_max_tweets: 8
+  fulltext_chars: 4000
   style_path: style.md        # your voice; see style.example.md or `xdraft style-import`
 
 publish:

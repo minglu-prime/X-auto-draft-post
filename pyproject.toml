@@ -17,10 +17,8 @@ dependencies = [
     "apscheduler>=3.11.3",
     "openai>=3.57.0",
     "tzdata>=2026.6",
+    "trafilatura>=2.3.1",
 ]
-
-[project.optional-dependencies]
-fulltext = ["trafilatura>=1.12"]
 
 [project.scripts]
 xdraft = "xdraft.cli:app"

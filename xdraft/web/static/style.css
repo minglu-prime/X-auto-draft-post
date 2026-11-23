@@ -109,3 +109,4 @@ a.button.primary { background: var(--accent); color: var(--accent-text); border-
 .revisions { font-size: 13px; }
 .revisions p { margin: 2px 0 6px; white-space: pre-wrap; color: var(--muted); }
 @media (max-width: 640px) { .topic-card dl { grid-template-columns: 1fr; } }
+.take { display: flex; flex-direction: column; gap: 6px; }

@@ -37,6 +37,7 @@ class SessionSummary:
     n_user_prompts: int = 0
     input_tokens: int = 0
     output_tokens: int = 0
+    last_reply: str = ""
 
 
 def _prompt_text(content: object) -> str | None:
@@ -103,7 +104,13 @@ def summarize_session(path: Path) -> SessionSummary | None:
                 model = msg.get("model")
                 if model and not str(model).startswith("<"):
                     s.models[str(model)] += 1
-                for block in msg.get("content") or []:
+                content = msg.get("content") or []
+                texts = [b.get("text", "") for b in content if isinstance(b, dict) and b.get("type") == "text"]
+                if isinstance(content, str):
+                    texts = [content]
+                if any(t.strip() for t in texts):
+                    s.last_reply = "\n".join(t for t in texts if t.strip())
+                for block in content if isinstance(content, list) else []:
                     if isinstance(block, dict) and block.get("type") == "tool_use":
                         s.tools[str(block.get("name", "?"))] += 1
                 usage = msg.get("usage") or {}
@@ -145,6 +152,9 @@ def _to_item(s: SessionSummary, cfg: Config) -> CollectedItem:
     ]
     if len(prompts) > len(shown):
         lines.append(f"… {len(prompts) - len(shown)} more")
+    if s.last_reply and cc.last_reply_chars:
+        lines.append("Last assistant reply (what got done): "
+                     + redact(_truncate(s.last_reply, cc.last_reply_chars), extra))
 
     title = s.title or (shown[0] if shown else f"Session in {s.project}")
     return CollectedItem(

@@ -189,9 +189,11 @@ def topics(
 @app.command()
 def write(
     topic_ids: list[int] = typer.Argument(..., help="Topic ids to write (see `xdraft topics`)."),
+    take: str = typer.Option("", "--take", "-t", help="Your own opinion; the post will argue it."),
+    fmt: str = typer.Option("", "--format", "-f", help="thread (default) or quick (one tweet)."),
     config: Optional[Path] = ConfigOpt,
 ) -> None:
-    """Steps 2-4: write → polish → optimize bilingual drafts for the picked topics."""
+    """Steps 2-4: write → polish → fix bilingual drafts for the picked topics."""
     from xdraft.pipeline.generate import produce_drafts
 
     cfg = load_config(config)
@@ -203,6 +205,10 @@ def write(
             if not topic:
                 console.print(f"[yellow]No topic #{tid}[/yellow]")
                 continue
+            if take.strip():
+                topic.user_take = take.strip()
+            if fmt in ("thread", "quick"):
+                topic.format = fmt
             try:
                 created = produce_drafts(cfg, llm, session, topic)
             except LLMError as e:
@@ -324,18 +330,24 @@ def style_import(
     force: bool = typer.Option(False, "--force", help="Overwrite an existing style file."),
     config: Optional[Path] = ConfigOpt,
 ) -> None:
-    """Learn your writing style from your X archive and write it to style.md."""
+    """Learn your voice from your X archive: saves your posts as examples and writes a style guide (style.md)."""
+    from xdraft import voice
     from xdraft.style_import import build_style, examples_only, load_archive_tweets
 
     cfg = load_config(config)
-    out = cfg.resolve_path(cfg.draft.style_path)
-    if out.exists() and not force:
-        console.print(f"{out} already exists; use --force to overwrite.")
-        raise typer.Exit(1)
     tweets = load_archive_tweets(archive)
     if not tweets:
         console.print("No original posts found in the archive.")
         raise typer.Exit(1)
+    saved = voice.save_archive(cfg, tweets)
+    console.print(f"Saved {len(tweets)} of your posts as writing examples: {saved}", markup=False)
+
+    out = cfg.resolve_path(cfg.draft.style_path)
+    template = cfg.resolve_path("style.example.md")
+    is_template = out.exists() and template.exists() and out.read_text(encoding="utf-8") == template.read_text(encoding="utf-8")
+    if out.exists() and not (force or is_template):
+        console.print(f"Kept your existing {out.name} (use --force to regenerate it).", markup=False)
+        return
     if no_llm:
         text = examples_only(tweets)
     else:
@@ -346,7 +358,52 @@ def style_import(
             raise typer.Exit(1) from e
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(text, encoding="utf-8")
-    console.print(f"Wrote {out} from {len(tweets)} posts. Review and edit it — drafts follow it closely.")
+    console.print(f"Wrote {out} from {len(tweets)} posts. Read it and fix anything that isn't you.", markup=False)
+
+
+voice_app = typer.Typer(help="Writing examples that make drafts sound like you.", no_args_is_help=True)
+app.add_typer(voice_app, name="voice")
+
+
+@voice_app.command("show")
+def voice_show(config: Optional[Path] = ConfigOpt) -> None:
+    """How many writing examples xdraft has."""
+    from xdraft import voice
+
+    info = voice.summary(load_config(config))
+    console.print(f"Your writing: {info['own']} pieces ({info['own_zh']} Chinese, {info['own_en']} English)", markup=False)
+    console.print(f"Writers you like: {info['references']} excerpts", markup=False)
+    console.print(f"Folder: {info['dir']}", markup=False)
+    if info["own"] < 10:
+        console.print("Tip: add at least 10-20 pieces of your own writing; it is the biggest lever against AI-sounding drafts.")
+
+
+@voice_app.command("add-file")
+def voice_add_file(
+    path: Path = typer.Argument(..., help="A .md or .txt file. Separate several pieces with a line of ---."),
+    reference: bool = typer.Option(False, "--reference", help="It's by a writer you like (default: your own writing)."),
+    config: Optional[Path] = ConfigOpt,
+) -> None:
+    """Add a text file of your own writing (or, with --reference, someone you like)."""
+    from xdraft import voice
+
+    cfg = load_config(config)
+    text = path.read_text(encoding="utf-8")
+    out = voice.save_text(cfg, "reference" if reference else "mine", text, path.stem)
+    console.print(f"Saved {out}", markup=False)
+
+
+@voice_app.command("add-url")
+def voice_add_url(url: str = typer.Argument(...), config: Optional[Path] = ConfigOpt) -> None:
+    """Save the text of an article by a writer you like (blogs, Substack, Medium…; not x.com, which needs login)."""
+    from xdraft import voice
+
+    try:
+        out = voice.save_url(load_config(config), url)
+    except Exception as e:  # noqa: BLE001 - network / extraction errors are shown to the user
+        console.print(f"[red]Could not save {url}: {e}[/red]")
+        raise typer.Exit(1) from e
+    console.print(f"Saved {out}", markup=False)
 
 
 @app.command()

@@ -144,8 +144,10 @@ def usage_summary(items: list[Item]) -> str:
     if sessions:
         lines.append(f"- Claude Code: {sessions} sessions, {prompts} prompts, ~{minutes} min, "
                      f"projects: {', '.join(p for p, _ in projects.most_common(5))}")
-        lines.append("- Models used: " + ", ".join(f"{m} ({n} replies)" for m, n in models.most_common(5)))
-        lines.append("- Most used tools: " + ", ".join(f"{t} ×{n}" for t, n in tools.most_common(6)))
+        if models:
+            lines.append("- Models used: " + ", ".join(f"{m} ({n} replies)" for m, n in models.most_common(5)))
+        if tools:
+            lines.append("- Most used tools: " + ", ".join(f"{t} ×{n}" for t, n in tools.most_common(6)))
     if repos:
         lines.append("- Commits: " + ", ".join(f"{r} ({n})" for r, n in sorted(repos.items(), key=lambda x: -x[1])[:5]))
     if notes:

@@ -33,3 +33,22 @@ def test_clean_post_has_no_warnings():
     w = check_post(["Tried the new model on a 40-file refactor. It kept the plan. https://good.example/a"],
                    ["https://good.example/a"], "40 files", [], ["something unrelated"])
     assert w == []
+
+
+def test_ai_patterns_catch_tells_and_spare_normal_text():
+    from xdraft.pipeline.check import ai_patterns
+
+    bad_en = ["The bottleneck isn't the agent — it's the review.", "Not just faster, but cheaper.",
+              "Here's the thing: nobody reads docs.", "A real game-changer.", "Let's dive in.",
+              "We delve into agents.", "This unlocks new workflows.", "In today's fast world.",
+              "Shipped it. What do you think?", "agents 🚀", "1/ a thread about agents"]
+    for t in bad_en:
+        assert ai_patterns(t, "en"), t
+    bad_zh = ["真正的瓶颈不是模型，而是审核。", "值得注意的是，它很快。", "总的来说还不错。", "让我们一起看看。",
+              "AI 赋能开发者。", "重磅发布", "干货分享", "首先装依赖，其次跑测试", "太强了！！", "你们觉得呢？"]
+    for t in bad_zh:
+        assert ai_patterns(t, "zh"), t
+    good = ["Handed Claude Code a 40-file refactor today. The plan held; tests took 2 hours to fix.",
+            "今天把 40 个文件的重构交给它，计划没跑偏，修测试花了两个小时。不确定换个项目还行不行。"]
+    assert ai_patterns(good[0], "en") == [] and ai_patterns(good[1], "zh") == []
+    assert ai_patterns("one — two — three", "en") == ['AI-ish: "2 em dashes"']

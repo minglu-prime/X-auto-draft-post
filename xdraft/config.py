@@ -24,6 +24,7 @@ class ClaudeCodeConfig(BaseModel):
     max_prompts_per_session: int = 15
     max_prompt_chars: int = 400
     min_user_prompts: int = 1
+    last_reply_chars: int = 600  # the session's last assistant message: a concrete "what got done"
 
 
 class NotesConfig(BaseModel):
@@ -72,7 +73,7 @@ class ArticlesConfig(BaseModel):
     feeds: list[FeedConfig] = Field(default_factory=list)
     hackernews: HackerNewsConfig = Field(default_factory=HackerNewsConfig)
     github: GitHubTrendingConfig = Field(default_factory=GitHubTrendingConfig)
-    fetch_fulltext: bool = False
+    fetch_fulltext: bool = True  # fetch article text when a topic is written (only for that topic's articles)
     fulltext_max_chars: int = 6000
     timeout_seconds: float = 20.0
 
@@ -90,8 +91,10 @@ class LLMConfig(BaseModel):
     model: str = "deepseek-chat"
     # Name of the environment variable holding the key (never put the key itself here).
     api_key_env: str = "DEEPSEEK_API_KEY"
-    temperature: float = 0.7
-    max_tokens: int = 4000
+    temperature: float = 0.7        # topic suggestions
+    temperature_write: float = 1.0  # first drafts: higher = less generic (DeepSeek suggests ~1.0-1.5 for writing)
+    temperature_edit: float = 0.6   # polish / fixes: keep close to the draft
+    max_tokens: int = 6000
     timeout_seconds: float = 120.0
     max_retries: int = 2
 
@@ -99,9 +102,18 @@ class LLMConfig(BaseModel):
 class DraftConfig(BaseModel):
     max_items: int = 60  # newest items sent to topic selection
     item_body_chars: int = 1200
-    thread_max_tweets: int = 5
+    fulltext_chars: int = 4000  # full article text used when a picked topic is written
+    thread_min_tweets: int = 3
+    thread_max_tweets: int = 8
     style_path: str = "style.md"
     duplicate_threshold: float = 0.8  # difflib ratio vs. recent posts
+
+
+class VoiceConfig(BaseModel):
+    dir: str = "voice"           # voice/mine (your writing) and voice/references (writers you like)
+    own_examples: int = 10       # your real posts shown to the writer per draft
+    reference_excerpts: int = 3
+    excerpt_chars: int = 600
 
 
 class PipelineConfig(BaseModel):
@@ -141,6 +153,7 @@ class Config(BaseModel):
     llm: LLMConfig = Field(default_factory=LLMConfig)
     draft: DraftConfig = Field(default_factory=DraftConfig)
     pipeline: PipelineConfig = Field(default_factory=PipelineConfig)
+    voice: VoiceConfig = Field(default_factory=VoiceConfig)
     publish: PublishConfig = Field(default_factory=PublishConfig)
 
     _base_dir: Path = PrivateAttr(default_factory=Path.cwd)

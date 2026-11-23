@@ -121,7 +121,7 @@ def test_suggest_then_write_topic(setup):
     with Session(engine) as s:
         item_id = s.exec(select(Item)).one().id
     llm.replies.append(SuggestionPlan(topics=[TopicSuggestion(
-        title="Agents and plans", angle="A", why_now="W", my_connection="M", format="single", score=60,
+        title="Agents and plans", angle="A", why_now="W", my_connection="M", format="thread", score=60,
         item_ids=[item_id], trend_terms=["agents"])]))
     r = client.post("/suggest", data={"days": "3"}, headers=H)
     assert r.status_code == 204 and r.headers["X-Redirect"] == "/topics"
@@ -131,15 +131,16 @@ def test_suggest_then_write_topic(setup):
         topic = s.exec(select(Topic).where(Topic.title == "Agents and plans")).one()
     llm.replies += [
         BilingualDraft(zh=PostVersion(tweets=["中文"]), en=PostVersion(tweets=["english"])),
-        BilingualDraft(zh=PostVersion(tweets=["中文润色"]), en=PostVersion(tweets=["english polished"])),
         OptimizedDraft(zh=OptimizedVersion(tweets=["中文终稿"], alt_hooks=["另一个开头"]),
                        en=OptimizedVersion(tweets=["english final"], alt_hooks=["another opening"])),
     ]
-    r = client.post(f"/topics/{topic.id}/write", headers=H)
+    r = client.post(f"/topics/{topic.id}/write", data={"take": "Review is the bottleneck", "format": "quick"}, headers=H)
     assert "Written, polished and optimized" in r.text
     with Session(engine) as s:
         en = s.exec(select(Draft).where(Draft.topic_id == topic.id, Draft.lang == "en")).one()
-        assert s.get(Topic, topic.id).status == TopicStatus.DRAFTED
+        t = s.get(Topic, topic.id)
+        assert t.status == TopicStatus.DRAFTED and t.user_take == "Review is the bottleneck" and t.format == "quick"
+    assert "Review is the bottleneck" in llm.calls[-2][1] and "one tweet" in llm.calls[-2][0]
     assert en.stage == "optimized" and en.tweets == ["english final"]
     r = client.post(f"/drafts/{en.id}/hook", data={"index": "0"}, headers=H)
     assert "Hook swapped" in r.text

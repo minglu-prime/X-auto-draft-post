@@ -13,4 +13,21 @@
   </div>
 </form>
 <div id="run-result" class="result"></div>
+
+<h2>Voice</h2>
+<p class="muted">Real writing makes drafts sound like you instead of AI. You have <b>{{ voice.own }}</b> pieces of your own writing
+({{ voice.own_zh }} Chinese, {{ voice.own_en }} English) and <b>{{ voice.references }}</b> excerpts from writers you like.
+{% if voice.own < 10 %}Aim for 10–20 of your own.{% endif %} Separate several pieces with a line of <code>---</code>.</p>
+<form data-post action="/voice" data-target="#voice-result" class="note" data-reset>
+  <div class="row">
+    <label><input type="radio" name="kind" value="mine" checked> My own writing</label>
+    <label><input type="radio" name="kind" value="reference"> A writer I like</label>
+  </div>
+  <textarea name="text" rows="8" placeholder="Paste posts, Jike/小红书 notes, newsletter paragraphs…"></textarea>
+  <div class="row">
+    <input name="url" placeholder="…or a link to an article by a writer you like (blogs, Substack; not x.com)" style="flex:1">
+    <button class="primary">Save to voice</button>
+  </div>
+</form>
+<div id="voice-result" class="result"></div>
 {% endblock %}

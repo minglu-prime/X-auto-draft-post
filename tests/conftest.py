@@ -24,7 +24,9 @@ def cfg(tmp_path: Path) -> Config:
         "db_path": "data/test.db",
         "claude_code": {"projects_dir": "claude_projects"},
         "notes": {"inbox_dir": "inbox"},
-        "articles": {"feeds": [], "hackernews": {"enabled": False}, "github": {"enabled": False}},
+        "articles": {"feeds": [], "hackernews": {"enabled": False}, "github": {"enabled": False},
+                     "fetch_fulltext": False},
+        "voice": {"dir": "voice"},
     })
     c._base_dir = tmp_path
     return c

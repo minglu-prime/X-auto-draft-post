@@ -50,4 +50,4 @@ def test_old_database_gets_new_columns(tmp_path):
     con.close()
     ge(db)
     cols = {r[1] for r in sqlite3.connect(db).execute("PRAGMA table_info(topic)")}
-    assert {"status", "my_connection", "trend_terms", "format"} <= cols
+    assert {"status", "my_connection", "trend_terms", "format", "user_take"} <= cols

@@ -8,3 +8,4 @@ config.yaml
 notes/inbox/*
 !notes/inbox/.gitkeep
 style.md
+voice/

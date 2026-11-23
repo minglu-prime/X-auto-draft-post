@@ -25,7 +25,7 @@ class LLMError(RuntimeError):
 
 
 class LLM(Protocol):
-    def parse(self, system: str, user: str, schema: type[T]) -> T: ...
+    def parse(self, system: str, user: str, schema: type[T], temperature: float | None = None) -> T: ...
 
 
 def schema_instructions(schema: type[BaseModel]) -> str:
@@ -64,7 +64,7 @@ class OpenAICompatibleLLM:
             )
         self.client = client
 
-    def _complete(self, messages: list[dict]) -> str:
+    def _complete(self, messages: list[dict], temperature: float | None = None) -> str:
         import openai
 
         try:
@@ -72,7 +72,7 @@ class OpenAICompatibleLLM:
                 model=self.cfg.model,
                 messages=messages,
                 response_format={"type": "json_object"},
-                temperature=self.cfg.temperature,
+                temperature=self.cfg.temperature if temperature is None else temperature,
                 max_tokens=self.cfg.max_tokens,
             )
         except openai.AuthenticationError as e:
@@ -88,14 +88,14 @@ class OpenAICompatibleLLM:
             raise LLMError("LLM reply was cut off (max_tokens too small)")
         return choice.message.content or ""
 
-    def parse(self, system: str, user: str, schema: type[T]) -> T:
+    def parse(self, system: str, user: str, schema: type[T], temperature: float | None = None) -> T:
         messages = [
             {"role": "system", "content": system + "\n\n" + schema_instructions(schema)},
             {"role": "user", "content": user},
         ]
         last_error: Exception | None = None
         for _attempt in range(2):
-            raw = self._complete(messages)
+            raw = self._complete(messages, temperature)
             try:
                 return schema.model_validate_json(extract_json(raw))
             except ValidationError as e:
