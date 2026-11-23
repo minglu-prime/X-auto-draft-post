@@ -15,7 +15,8 @@ from sqlmodel import Session, select
 from xdraft.collectors import COLLECTORS
 from xdraft.config import load_config
 from xdraft.db import get_engine
-from xdraft.models import Item
+from xdraft.llm import LLMError, make_llm
+from xdraft.models import Draft, DraftStatus, Item, Topic
 from xdraft.runner import run_collect
 from xdraft.timeutil import utcnow
 
@@ -93,6 +94,67 @@ def items(
         console.rule(f"#{it.id} [{it.source}] {it.title}")
         console.print(f"{it.ts:%Y-%m-%d %H:%M} UTC" + (f"  {it.url}" if it.url else ""))
         console.print(it.body, markup=False, highlight=False)
+
+
+def print_drafts(drafts: list[Draft], topics: dict[int, Topic]) -> None:
+    for d in drafts:
+        topic = topics.get(d.topic_id)
+        console.rule(f"draft #{d.id} [{d.lang}] {d.status} — {topic.title if topic else ''}")
+        for i, t in enumerate(d.tweets, 1):
+            prefix = f"{i}/{len(d.tweets)} " if len(d.tweets) > 1 else ""
+            console.print(prefix + t, markup=False, highlight=False)
+        if d.source_urls:
+            console.print("sources: " + ", ".join(d.source_urls), style="dim", markup=False)
+        for w in d.warnings:
+            console.print(f"⚠ {w}", style="yellow", markup=False)
+
+
+@app.command()
+def draft(
+    days: Optional[int] = typer.Option(None, "--days", "-d", help="Use material from the last N days."),
+    topics: Optional[int] = typer.Option(None, "--topics", "-t", help="Number of topics (default: draft.topics_per_run)."),
+    collect_first: bool = typer.Option(False, "--collect", help="Run all collectors first."),
+    config: Optional[Path] = ConfigOpt,
+) -> None:
+    """Pick topics from collected material and write bilingual drafts for review."""
+    from xdraft.pipeline.generate import generate
+
+    cfg = load_config(config)
+    since = utcnow() - timedelta(days=days if days is not None else cfg.lookback_days)
+    if collect_first:
+        run_collect(cfg, since)
+    engine = get_engine(cfg.resolve_path(cfg.db_path))
+    try:
+        llm = make_llm(cfg.llm)
+        with Session(engine) as session:
+            created = generate(cfg, llm, session, since, topics)
+            topic_map = {t.id: t for t in session.exec(select(Topic)).all()}
+    except LLMError as e:
+        console.print(f"[red]{e}[/red]")
+        raise typer.Exit(1) from e
+    if not created:
+        console.print("No drafts created (no material in the window, or no topic found). Try `xdraft collect` first.")
+        return
+    print_drafts(created, topic_map)
+    console.print(f"\n{len(created)} drafts are waiting for review: run `xdraft serve` and open http://127.0.0.1:8000")
+
+
+@app.command()
+def drafts(
+    status: Optional[str] = typer.Option(DraftStatus.PENDING, "--status", help=f"One of {DraftStatus.ALL} or 'all'."),
+    limit: int = typer.Option(20, "--limit", "-n"),
+    config: Optional[Path] = ConfigOpt,
+) -> None:
+    """List drafts."""
+    cfg = load_config(config)
+    engine = get_engine(cfg.resolve_path(cfg.db_path))
+    with Session(engine) as session:
+        q = select(Draft).order_by(Draft.id.desc()).limit(limit)
+        if status and status != "all":
+            q = q.where(Draft.status == status)
+        rows = list(session.exec(q).all())
+        topic_map = {t.id: t for t in session.exec(select(Topic)).all()}
+    print_drafts(rows, topic_map)
 
 
 if __name__ == "__main__":

@@ -55,3 +55,27 @@ articles:
 redaction:
   # Extra regexes replaced with [REDACTED] in everything collected.
   extra_patterns: []
+
+# LLM: any OpenAI-compatible API. Put the key in .env, never here.
+llm:
+  provider: deepseek
+  base_url: https://api.deepseek.com
+  model: deepseek-chat
+  api_key_env: DEEPSEEK_API_KEY
+  # OpenAI instead:
+  # provider: openai
+  # base_url: null            # SDK default (api.openai.com)
+  # model: <an OpenAI chat model that supports JSON mode>
+  # api_key_env: OPENAI_API_KEY
+  temperature: 0.7
+
+draft:
+  topics_per_run: 4
+  max_items: 60
+  thread_max_tweets: 5
+  style_path: style.md        # your voice; see style.example.md or `xdraft style-import`
+
+publish:
+  enabled: false              # true = really post to X; false = dry run only
+  redirect_uri: http://127.0.0.1:8000/x/callback   # must match your X app settings
+  metrics_every_minutes: 120

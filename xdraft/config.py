@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import yaml
@@ -66,6 +67,42 @@ class RedactionConfig(BaseModel):
     extra_patterns: list[str] = Field(default_factory=list)
 
 
+class LLMConfig(BaseModel):
+    """Any OpenAI-compatible chat API. DeepSeek: base_url https://api.deepseek.com."""
+
+    provider: str = "deepseek"  # deepseek | openai | other (label only)
+    base_url: str | None = "https://api.deepseek.com"
+    model: str = "deepseek-chat"
+    # Name of the environment variable holding the key (never put the key itself here).
+    api_key_env: str = "DEEPSEEK_API_KEY"
+    temperature: float = 0.7
+    max_tokens: int = 4000
+    timeout_seconds: float = 120.0
+    max_retries: int = 2
+
+
+class DraftConfig(BaseModel):
+    topics_per_run: int = 4
+    max_items: int = 60  # newest items sent to topic selection
+    item_body_chars: int = 1200
+    thread_max_tweets: int = 5
+    style_path: str = "style.md"
+    duplicate_threshold: float = 0.8  # difflib ratio vs. recent posts
+
+
+class PublishConfig(BaseModel):
+    # Off by default: approved posts are only logged as dry runs.
+    enabled: bool = False
+    client_id_env: str = "X_CLIENT_ID"
+    client_secret_env: str = "X_CLIENT_SECRET"  # optional (confidential clients)
+    redirect_uri: str = "http://127.0.0.1:8000/x/callback"
+    token_path: str = "data/x_token.json"
+    api_base: str = "https://api.x.com"
+    authorize_url: str = "https://x.com/i/oauth2/authorize"
+    retry_minutes_on_rate_limit: int = 15
+    metrics_every_minutes: int = 120
+
+
 class Config(BaseModel):
     db_path: str = "data/xdraft.db"
     lookback_days: int = 3
@@ -74,6 +111,9 @@ class Config(BaseModel):
     git: GitConfig = Field(default_factory=GitConfig)
     articles: ArticlesConfig = Field(default_factory=ArticlesConfig)
     redaction: RedactionConfig = Field(default_factory=RedactionConfig)
+    llm: LLMConfig = Field(default_factory=LLMConfig)
+    draft: DraftConfig = Field(default_factory=DraftConfig)
+    publish: PublishConfig = Field(default_factory=PublishConfig)
 
     _base_dir: Path = PrivateAttr(default_factory=Path.cwd)
 
@@ -89,6 +129,20 @@ class Config(BaseModel):
         return path
 
 
+def load_dotenv(path: Path) -> None:
+    """Minimal .env reader: KEY=value lines; never overrides variables already set."""
+    if not path.is_file():
+        return
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key, value = key.strip().removeprefix("export ").strip(), value.strip().strip("'\"")
+        if key and value and key not in os.environ:
+            os.environ[key] = value
+
+
 def load_config(path: str | Path | None = None) -> Config:
     """Load config from `path`, or ./config.yaml if present, else defaults."""
     candidate = Path(path) if path else Path("config.yaml")
@@ -101,4 +155,5 @@ def load_config(path: str | Path | None = None) -> Config:
     else:
         cfg = Config()
         cfg._base_dir = Path.cwd()
+    load_dotenv(cfg.base_dir / ".env")
     return cfg
