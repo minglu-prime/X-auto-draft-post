@@ -1,19 +1,19 @@
 {% extends "base.html" %}
-{% block title %}history{% endblock %}
+{% block title %}已发布{% endblock %}
 {% block content %}
 <section class="toolbar">
-  <form data-post action="/metrics/refresh" data-target="#run-result"><button>Refresh engagement</button></form>
+  <form data-post action="/metrics/refresh" data-target="#run-result"><button data-busy="正在从 X 拉取数据">刷新互动数据</button></form>
 </section>
 <div id="run-result" class="result"></div>
-{% if not drafts %}<p class="empty">Nothing published yet.</p>{% endif %}
+{% if not drafts %}<p class="empty">还没有发布过。批准的草稿到点发布后会出现在这里。</p>{% else %}
 <table class="history">
-  <thead><tr><th>When</th><th>Status</th><th>Post</th><th>Likes</th><th>Reposts</th><th>Replies</th><th>Views</th></tr></thead>
+  <thead><tr><th>时间</th><th>状态</th><th>内容</th><th>赞</th><th>转发</th><th>回复</th><th>浏览</th></tr></thead>
   <tbody>
   {% for d in drafts %}
   <tr>
     <td class="nowrap">{{ (d.published_at or d.updated_at)|local }}</td>
-    <td><span class="badge st-{{ d.status }}">{{ d.status.replace('_', ' ') }}</span> <span class="muted">{{ d.lang }}</span></td>
-    <td>{% if d.tweet_ids %}<a href="https://x.com/i/web/status/{{ d.tweet_ids[0] }}" target="_blank" rel="noopener noreferrer">{{ d.tweets[0][:120] }}</a>{% else %}{{ d.tweets[0][:120] }}{% endif %}{% if d.tweets|length > 1 %} <span class="muted">(+{{ d.tweets|length - 1 }})</span>{% endif %}</td>
+    <td><span class="badge st-{{ d.status }}">{{ status_zh.get(d.status, d.status) }}</span> <span class="muted">{{ '中' if d.lang == 'zh' else '英' }}</span></td>
+    <td>{% if d.tweet_ids %}<a href="https://x.com/i/web/status/{{ d.tweet_ids[0] }}" target="_blank" rel="noopener noreferrer">{{ d.tweets[0][:120] }}</a>{% else %}{{ d.tweets[0][:120] }}{% endif %}{% if d.tweets|length > 1 %} <span class="muted">（+{{ d.tweets|length - 1 }}）</span>{% endif %}</td>
     <td class="num">{{ d.metrics.get('like_count', '–') }}</td>
     <td class="num">{{ d.metrics.get('retweet_count', '–') }}</td>
     <td class="num">{{ d.metrics.get('reply_count', '–') }}</td>
@@ -22,4 +22,5 @@
   {% endfor %}
   </tbody>
 </table>
+{% endif %}
 {% endblock %}

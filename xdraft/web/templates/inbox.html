@@ -1,32 +1,32 @@
 {% extends "base.html" %}
-{% block title %}inbox{% endblock %}
+{% block title %}笔记与文风{% endblock %}
 {% block content %}
-<h2>Quick note</h2>
-<p class="muted">Your takes on models and tools. Notes are the strongest signal when picking topics.</p>
+<h2>随手记</h2>
+<p class="muted">记下你对模型和工具的看法。挑选题时，你的笔记权重最高。</p>
 <form data-post action="/inbox" data-target="#run-result" class="note" data-reset>
-  <input name="title" placeholder="Title (optional)">
-  <textarea name="body" rows="7" required placeholder="What did you notice? e.g. the new model kept the plan across a 40-file refactor…"></textarea>
+  <input name="title" placeholder="标题（可选）">
+  <textarea name="body" rows="7" required placeholder="你注意到了什么？比如：新模型在 40 个文件的重构里一直没偏离计划…"></textarea>
   <div class="row">
-    <input name="tags" placeholder="tags, comma separated">
-    <input name="url" placeholder="related link (optional)">
-    <button class="primary">Save note</button>
+    <input name="tags" placeholder="标签，用逗号分隔">
+    <input name="url" placeholder="相关链接（可选）">
+    <button class="primary">保存笔记</button>
   </div>
 </form>
 <div id="run-result" class="result"></div>
 
-<h2>Voice</h2>
-<p class="muted">Real writing makes drafts sound like you instead of AI. You have <b>{{ voice.own }}</b> pieces of your own writing
-({{ voice.own_zh }} Chinese, {{ voice.own_en }} English) and <b>{{ voice.references }}</b> excerpts from writers you like.
-{% if voice.own < 10 %}Aim for 10–20 of your own.{% endif %} Separate several pieces with a line of <code>---</code>.</p>
+<h2>文风</h2>
+<p class="muted">你的真实文字能让草稿更像你，而不是 AI。现在有 <b>{{ voice.own }}</b> 篇你自己的文字
+（中文 {{ voice.own_zh }}，英文 {{ voice.own_en }}），以及 <b>{{ voice.references }}</b> 段你喜欢的作者的摘录。
+{% if voice.own < 10 %}建议攒到 10–20 篇自己的文字。{% endif %}一次粘贴多篇时，用单独一行 <code>---</code> 隔开。</p>
 <form data-post action="/voice" data-target="#voice-result" class="note" data-reset>
   <div class="row">
-    <label><input type="radio" name="kind" value="mine" checked> My own writing</label>
-    <label><input type="radio" name="kind" value="reference"> A writer I like</label>
+    <label><input type="radio" name="kind" value="mine" checked> 我自己写的</label>
+    <label><input type="radio" name="kind" value="reference"> 我喜欢的作者</label>
   </div>
-  <textarea name="text" rows="8" placeholder="Paste posts, Jike/小红书 notes, newsletter paragraphs…"></textarea>
+  <textarea name="text" rows="8" placeholder="粘贴推文、即刻/小红书笔记、newsletter 段落…"></textarea>
   <div class="row">
-    <input name="url" placeholder="…or a link to an article by a writer you like (blogs, Substack; not x.com)" style="flex:1">
-    <button class="primary">Save to voice</button>
+    <input name="url" placeholder="…或者填一篇你喜欢的作者的文章链接（博客、Substack；不支持 x.com）" style="flex:1">
+    <button class="primary" data-busy="正在保存">存入文风库</button>
   </div>
 </form>
 <div id="voice-result" class="result"></div>

@@ -22,12 +22,14 @@ _STAT_RE = re.compile(
 
 def read_commits(repo: Path, since: datetime, authors: list[str]) -> list[dict]:
     cmd = [
-        "git", "-C", str(repo), "log", "--no-merges", "--shortstat",
+        # Force UTF-8 on both ends: the Windows locale (e.g. gbk) can't decode git's output.
+        "git", "-C", str(repo), "-c", "i18n.logOutputEncoding=UTF-8",
+        "log", "--no-merges", "--shortstat",
         f"--since={since.isoformat()}",
         f"--pretty=format:{_RS}%H{_US}%an{_US}%aI{_US}%s{_US}%b{_US}",
     ]
     cmd += [f"--author={a}" for a in authors]
-    out = subprocess.run(cmd, capture_output=True, text=True, check=True).stdout
+    out = subprocess.run(cmd, capture_output=True, encoding="utf-8", check=True).stdout
     commits = []
     for chunk in out.split(_RS):
         if not chunk.strip():

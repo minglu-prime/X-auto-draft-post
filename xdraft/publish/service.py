@@ -71,11 +71,11 @@ def next_free_slot(cfg: Config, session: Session, after: datetime | None = None)
 
 def approve(session: Session, draft: Draft, when: datetime | None = None) -> Draft:
     if draft.status not in (DraftStatus.PENDING, DraftStatus.FAILED, DraftStatus.SCHEDULED):
-        raise ValueError(f"Draft #{draft.id} is {draft.status}; only pending/failed drafts can be approved")
+        raise ValueError(f"草稿 #{draft.id} 当前状态是 {draft.status}，只有待审或发布失败的草稿能批准")
     too_long = [i for i, t in enumerate(draft.tweets, 1) if weighted_length(t) > MAX_WEIGHTED]
     if too_long or not draft.tweets:
-        raise ValueError(f"Tweet {too_long[0]} is over {MAX_WEIGHTED} characters; shorten it first"
-                         if too_long else "Draft is empty")
+        raise ValueError(f"第 {too_long[0]} 条推文超过 {MAX_WEIGHTED} 字符，请先删短"
+                         if too_long else "草稿是空的")
     draft.status = DraftStatus.SCHEDULED
     draft.scheduled_at = to_utc(when) if when else utcnow()
     draft.publish_error = None
@@ -121,7 +121,7 @@ def publish_draft(cfg: Config, session: Session, draft: Draft, client_factory: C
     except XRateLimited as e:
         retry = max(e.retry_at or now, now + timedelta(minutes=cfg.publish.retry_minutes_on_rate_limit))
         draft.scheduled_at = retry
-        draft.publish_error = f"Rate limited; retrying at {retry:%Y-%m-%d %H:%M} UTC"
+        draft.publish_error = f"被 X 限流，将在 {retry:%Y-%m-%d %H:%M} UTC 重试"
         _touch(session, draft)
         return draft
     except (XAuthError, XError, httpx.HTTPError) as e:
