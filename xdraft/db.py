@@ -16,7 +16,8 @@ from xdraft.timeutil import to_utc, utcnow
 
 def get_engine(db_path: Path) -> Engine:
     db_path.parent.mkdir(parents=True, exist_ok=True)
-    engine = create_engine(f"sqlite:///{db_path}")
+    # The dashboard and its scheduler use the engine from several threads.
+    engine = create_engine(f"sqlite:///{db_path}", connect_args={"check_same_thread": False})
     SQLModel.metadata.create_all(engine)
     return engine
 

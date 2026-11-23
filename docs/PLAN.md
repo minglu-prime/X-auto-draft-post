@@ -19,7 +19,7 @@ Goal: automatically turn **my recent AI usage** (Claude Code logs, notes, git co
 collectors ──► SQLite (items) ──► pipeline ──► drafts ──► Web dashboard (review/edit) ──► publisher (X API)
 ```
 
-**Stack**: Python 3.12, uv, FastAPI + Jinja2 + HTMX (no frontend build), SQLModel/SQLite, APScheduler, Anthropic SDK, tweepy (X API v2), feedparser, trafilatura (article body extraction), GitPython.
+**Stack** (as built): Python ≥3.11, uv, FastAPI + Jinja2 + a ~60-line fetch helper instead of HTMX (no CDN, works offline), SQLModel/SQLite, APScheduler, the `openai` SDK against DeepSeek or OpenAI (JSON mode + pydantic validation), httpx for the X API v2 (instead of tweepy), feedparser, optional trafilatura, and `git` via subprocess.
 
 ### 1. Collectors (`xdraft/collectors/`): one module per source, all producing a common `Item` (source, ts, title, body, url, meta, hash for dedup)
 - `claude_code.py`: reads `~/.claude/projects/*/*.jsonl` and summarizes recent sessions by project: models used (`message.model`), user prompts, tool usage counts, session length. **Secrets and absolute paths are redacted locally first** (regexes for API keys/tokens/emails, plus a project allowlist/denylist).
@@ -30,13 +30,13 @@ collectors ──► SQLite (items) ──► pipeline ──► drafts ──�
 
 ### 2. Pipeline (`xdraft/pipeline/`)
 1. **Score/cluster** (`select.py`): an LLM scores recent items for relevance to "new model / AI workflow" topics and clusters them into 3–5 topics per day (e.g. "used new model X with Claude Code to refactor Y + model X release article").
-2. **Draft** (`draft.py`): for each topic, generates in one pass: a Chinese post, an English post, an optional thread (≤5 tweets) and a cited source URL. The prompt includes the **style profile** (`style.md`, built from my past posts and hand-edited) and the opinions from my notes, so the post reads as "me" rather than a news summary. Uses the latest Claude models (Sonnet for drafting; Opus for higher-quality rewrites when asked).
+2. **Draft** (`draft.py`): for each topic, generates in one pass: a Chinese post, an English post, an optional thread (≤5 tweets) and a cited source URL. The prompt includes the **style profile** (`style.md`, built from my past posts and hand-edited) and the opinions from my notes, so the post reads as "me" rather than a news summary. Uses any OpenAI-compatible model, DeepSeek `deepseek-chat` by default, configured in `config.yaml` under `llm:`.
 3. **Check** (`check.py`): character count (X's weighted count, CJK characters count double), duplicate check against recently published posts, a check that facts trace back to source items (flags unsourced claims), and a sensitive-content check.
 
 ### 3. Web dashboard (`xdraft/web/`), bound to 127.0.0.1 only
 - `/` today's draft queue: Chinese/English side by side, inline editing, "regenerate / shorten / change tone" buttons, a view of the source items, then **Approve → choose post now / scheduled time**, or Reject.
 - `/inbox` quick note entry; `/sources` collection status and manual re-runs; `/history` published posts.
-- Approved posts go into the `scheduled_posts` table, and APScheduler publishes them when due.
+- Approved posts are marked `scheduled` on the draft itself (`scheduled_at`), and APScheduler publishes them when due. `xdraft publish-due` does the same for cron.
 
 ### 4. Publisher (`xdraft/publish/x.py`)
 - X API v2 `POST /2/tweets` (OAuth 2.0 user context with PKCE, token stored locally), with thread support via reply_to. Check X's current API pricing/tier and rate limits during implementation.
@@ -56,7 +56,7 @@ notes/inbox/  style.md
 tests/  (fixtures: sample Claude Code jsonl, RSS xml)
 ```
 
-## Milestones
+## Milestones (all done, see README for usage)
 1. **M1 skeleton + collectors**: pyproject, DB models, the 4 collectors, `xdraft collect` (verify with fixtures).
 2. **M2 draft generation**: select + draft + check, `xdraft draft` prints bilingual drafts in the terminal.
 3. **M3 web dashboard**: review/edit/approve/regenerate.

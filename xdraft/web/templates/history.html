@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}history{% endblock %}
+{% block content %}
+<section class="toolbar">
+  <form data-post action="/metrics/refresh" data-target="#run-result"><button>Refresh engagement</button></form>
+</section>
+<div id="run-result" class="result"></div>
+{% if not drafts %}<p class="empty">Nothing published yet.</p>{% endif %}
+<table class="history">
+  <thead><tr><th>When</th><th>Status</th><th>Post</th><th>Likes</th><th>Reposts</th><th>Replies</th><th>Views</th></tr></thead>
+  <tbody>
+  {% for d in drafts %}
+  <tr>
+    <td class="nowrap">{{ (d.published_at or d.updated_at).strftime('%m-%d %H:%M') }}</td>
+    <td><span class="badge st-{{ d.status }}">{{ d.status.replace('_', ' ') }}</span> <span class="muted">{{ d.lang }}</span></td>
+    <td>{% if d.tweet_ids %}<a href="https://x.com/i/web/status/{{ d.tweet_ids[0] }}" target="_blank" rel="noopener noreferrer">{{ d.tweets[0][:120] }}</a>{% else %}{{ d.tweets[0][:120] }}{% endif %}{% if d.tweets|length > 1 %} <span class="muted">(+{{ d.tweets|length - 1 }})</span>{% endif %}</td>
+    <td class="num">{{ d.metrics.get('like_count', '–') }}</td>
+    <td class="num">{{ d.metrics.get('retweet_count', '–') }}</td>
+    <td class="num">{{ d.metrics.get('reply_count', '–') }}</td>
+    <td class="num">{{ d.metrics.get('impression_count', '–') }}</td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

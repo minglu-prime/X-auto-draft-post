@@ -56,3 +56,23 @@ def test_generate_without_items_does_not_call_llm(cfg, since):
     engine = get_engine(cfg.resolve_path(cfg.db_path))
     with Session(engine) as session:
         assert generate(cfg, FakeLLM(), session, since) == []
+
+
+def test_performance_summary_feeds_topic_selection(cfg, since):
+    from xdraft.models import DraftStatus
+    from xdraft.pipeline.generate import performance_summary
+    from xdraft.timeutil import utcnow
+
+    engine = get_engine(cfg.resolve_path(cfg.db_path))
+    with Session(engine) as session:
+        assert "no engagement" in performance_summary(session)
+        for text, likes in (("hit post", 120), ("flop post", 1)):
+            session.add(Draft(lang="en", tweets=[text], status=DraftStatus.PUBLISHED, tweet_ids=["1"],
+                              metrics={"like_count": likes}, created_at=utcnow(), updated_at=utcnow()))
+        session.commit()
+        summary = performance_summary(session)
+        assert summary.index("hit post") < summary.index("flop post") and "likes 120" in summary
+        _seed(session)
+        llm = FakeLLM(TopicPlan(topics=[]))
+        generate(cfg, llm, session, since)
+        assert "likes 120" in llm.calls[0][0]

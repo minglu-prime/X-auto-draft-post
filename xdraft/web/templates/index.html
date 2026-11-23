@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="toolbar">
+  <form data-post action="/collect" data-target="#run-result">
+    <label>Days <input type="number" name="days" min="1" max="60" value="{{ cfg.lookback_days }}"></label>
+    <button>Collect material</button>
+  </form>
+  <form data-post action="/generate" data-target="#run-result">
+    <label>Days <input type="number" name="days" min="1" max="60" value="{{ cfg.lookback_days }}"></label>
+    <label>Topics <input type="number" name="topics" min="1" max="10" value="{{ cfg.draft.topics_per_run }}"></label>
+    <button class="primary">Generate drafts</button>
+  </form>
+  <span class="muted">{{ n_items }} items collected</span>
+</section>
+<div id="run-result" class="result"></div>
+
+{% if not groups %}
+<p class="empty">No drafts waiting. Collect material, then generate drafts.</p>
+{% endif %}
+
+{% for g in groups %}
+<section class="topic">
+  {% if g.topic %}
+  <h2>{{ g.topic.title }} <span class="score" title="interest score">{{ g.topic.score }}</span></h2>
+  <p class="angle">{{ g.topic.angle }}</p>
+  {% if g.topic.why %}<p class="muted">{{ g.topic.why }}</p>{% endif %}
+  <details class="items"><summary>{{ g["items"]|length }} source items</summary>
+    <ul>{% for it in g["items"] %}
+      <li><span class="src src-{{ it.source }}">{{ it.source }}</span>
+        {% if it.url %}<a href="{{ it.url }}" target="_blank" rel="noopener noreferrer">{{ it.title }}</a>{% else %}{{ it.title }}{% endif %}
+        <span class="muted">{{ it.ts.strftime('%m-%d') }}</span></li>
+    {% endfor %}</ul>
+  </details>
+  {% endif %}
+  <div class="pair">
+    {% for d in g.drafts %}{% set topic = g.topic %}{% include "_draft.html" %}{% endfor %}
+  </div>
+</section>
+{% endfor %}
+{% endblock %}

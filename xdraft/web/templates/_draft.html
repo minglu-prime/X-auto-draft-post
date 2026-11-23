@@ -1,0 +1,52 @@
+<article class="draft status-{{ d.status }}" id="draft-{{ d.id }}" data-swap>
+  <header>
+    <span class="lang">{{ 'Chinese' if d.lang == 'zh' else 'English' }}</span>
+    <span class="badge st-{{ d.status }}">{{ d.status.replace('_', ' ') }}</span>
+    {% if d.edited %}<span class="muted">edited</span>{% endif %}
+    {% if d.status == 'scheduled' and d.scheduled_at %}<span class="muted">→ {{ d.scheduled_at.strftime('%Y-%m-%d %H:%M') }} UTC</span>{% endif %}
+    <span class="muted right">#{{ d.id }}</span>
+  </header>
+  {% if message %}<p class="ok">{{ message }}</p>{% endif %}
+  {% if error %}<p class="warn">{{ error }}</p>{% elif d.publish_error %}<p class="warn">{{ d.publish_error }}</p>{% endif %}
+
+  {% if d.status in ('pending', 'failed', 'scheduled') %}
+  <form data-post action="/drafts/{{ d.id }}/save">
+    <textarea name="body" rows="{{ 3 + d.text|length // 60 }}" data-counter="#count-{{ d.id }}">{{ d.tweets|join('\n---\n') }}</textarea>
+    <div class="row">
+      <span class="counter" id="count-{{ d.id }}">{% for t in d.tweets %}{% set n = weighted_length(t) %}<span class="{{ 'over' if n > MAX_WEIGHTED else '' }}">{{ n }}/{{ MAX_WEIGHTED }}</span>{% endfor %}</span>
+      <span class="muted hint">separate thread tweets with a line of ---</span>
+      <button>Save</button>
+    </div>
+  </form>
+  {% else %}
+  <div class="tweets">{% for t in d.tweets %}<p>{{ t }}</p>{% endfor %}</div>
+  {% endif %}
+
+  {% if d.warnings %}<ul class="warnings">{% for w in d.warnings %}<li>{{ w }}</li>{% endfor %}</ul>{% endif %}
+  {% if d.source_urls %}<p class="sources">{% for u in d.source_urls %}<a href="{{ u }}" target="_blank" rel="noopener noreferrer">{{ u }}</a> {% endfor %}</p>{% endif %}
+
+  {% if d.status in ('pending', 'failed') %}
+  <form data-post action="/drafts/{{ d.id }}/rewrite" class="row">
+    <select name="preset">{% for k, v in presets.items() %}<option value="{{ k }}">{{ k }}</option>{% endfor %}</select>
+    <input name="instruction" placeholder="or your own instruction…">
+    <button>Rewrite with AI</button>
+  </form>
+  <div class="row actions">
+    <form data-post action="/drafts/{{ d.id }}/approve" data-confirm="{{ 'Post this to X now?' if cfg.publish.enabled else '' }}">
+      <button class="primary">Approve &amp; post now</button>
+    </form>
+    <form data-post action="/drafts/{{ d.id }}/approve" class="row">
+      <input type="datetime-local" name="when" required><input type="hidden" name="tz_offset" value="0">
+      <button>Schedule</button>
+    </form>
+    <form data-post action="/drafts/{{ d.id }}/reject"><button class="danger">Reject</button></form>
+  </div>
+  {% elif d.status == 'scheduled' %}
+  <div class="row actions">
+    <form data-post action="/drafts/{{ d.id }}/unschedule"><button>Unschedule</button></form>
+    <form data-post action="/drafts/{{ d.id }}/reject"><button class="danger">Reject</button></form>
+  </div>
+  {% elif d.status == 'published' and d.tweet_ids %}
+  <p><a href="https://x.com/i/web/status/{{ d.tweet_ids[0] }}" target="_blank" rel="noopener noreferrer">View on X</a></p>
+  {% endif %}
+</article>

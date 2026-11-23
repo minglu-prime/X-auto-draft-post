@@ -157,5 +157,105 @@ def drafts(
     print_drafts(rows, topic_map)
 
 
+@app.command()
+def serve(
+    port: int = typer.Option(8000, "--port", "-p"),
+    no_scheduler: bool = typer.Option(False, "--no-scheduler", help="Don't publish scheduled posts from this process."),
+    config: Optional[Path] = ConfigOpt,
+) -> None:
+    """Start the local review dashboard on http://127.0.0.1:PORT."""
+    import uvicorn
+
+    from xdraft.web.app import create_app
+
+    cfg = load_config(config)
+    mode = "LIVE posting" if cfg.publish.enabled else "dry run (publish.enabled is false)"
+    console.print(f"Dashboard: http://127.0.0.1:{port}  —  {mode}")
+    uvicorn.run(create_app(cfg, start_scheduler=not no_scheduler), host="127.0.0.1", port=port, log_level="warning")
+
+
+@app.command("publish-due")
+def publish_due_cmd(config: Optional[Path] = ConfigOpt) -> None:
+    """Publish approved drafts whose time has come (for cron, if the dashboard isn't running)."""
+    from xdraft.publish.service import publish_due
+
+    cfg = load_config(config)
+    with Session(get_engine(cfg.resolve_path(cfg.db_path))) as session:
+        done = publish_due(cfg, session)
+    for d in done:
+        console.print(f"draft #{d.id} [{d.lang}] -> {d.status}" + (f" ({d.publish_error})" if d.publish_error else ""))
+    if not done:
+        console.print("Nothing due.")
+
+
+@app.command()
+def metrics(config: Optional[Path] = ConfigOpt) -> None:
+    """Fetch likes/reposts/replies/views for recent published posts."""
+    from xdraft.publish.service import refresh_metrics
+    from xdraft.publish.x import XError
+
+    cfg = load_config(config)
+    try:
+        with Session(get_engine(cfg.resolve_path(cfg.db_path))) as session:
+            n = refresh_metrics(cfg, session)
+    except XError as e:
+        console.print(f"[red]{e}[/red]")
+        raise typer.Exit(1) from e
+    console.print(f"Updated metrics for {n} posts.")
+
+
+@app.command("x-status")
+def x_status(config: Optional[Path] = ConfigOpt) -> None:
+    """Show whether X posting is configured and connected."""
+    from xdraft.publish.service import make_x_client
+    from xdraft.publish.x import XError
+
+    cfg = load_config(config)
+    client = make_x_client(cfg)
+    console.print(f"publish.enabled: {cfg.publish.enabled}")
+    console.print(f"{cfg.publish.client_id_env} set: {bool(client.client_id)}")
+    if not client.connected:
+        console.print("Not connected — run `xdraft serve` and click “Connect X”.")
+        return
+    try:
+        me = client.me()
+        console.print(f"Connected as @{me.get('username', '?')}")
+    except XError as e:
+        console.print(f"[red]{e}[/red]")
+
+
+@app.command("style-import")
+def style_import(
+    archive: Path = typer.Argument(..., help="X archive folder (or its data/tweets.js)."),
+    samples: int = typer.Option(80, "--samples", help="Posts sent to the LLM."),
+    no_llm: bool = typer.Option(False, "--no-llm", help="Only copy example posts; don't call the LLM."),
+    force: bool = typer.Option(False, "--force", help="Overwrite an existing style file."),
+    config: Optional[Path] = ConfigOpt,
+) -> None:
+    """Learn your writing style from your X archive and write it to style.md."""
+    from xdraft.style_import import build_style, examples_only, load_archive_tweets
+
+    cfg = load_config(config)
+    out = cfg.resolve_path(cfg.draft.style_path)
+    if out.exists() and not force:
+        console.print(f"{out} already exists; use --force to overwrite.")
+        raise typer.Exit(1)
+    tweets = load_archive_tweets(archive)
+    if not tweets:
+        console.print("No original posts found in the archive.")
+        raise typer.Exit(1)
+    if no_llm:
+        text = examples_only(tweets)
+    else:
+        try:
+            text = build_style(make_llm(cfg.llm), tweets, samples)
+        except LLMError as e:
+            console.print(f"[red]{e}[/red]")
+            raise typer.Exit(1) from e
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(text, encoding="utf-8")
+    console.print(f"Wrote {out} from {len(tweets)} posts. Review and edit it — drafts follow it closely.")
+
+
 if __name__ == "__main__":
     app()
