@@ -8,6 +8,7 @@ import httpx
 import pytest
 from sqlmodel import Session
 
+from xdraft import media
 from xdraft.db import get_engine
 from xdraft.models import Draft, DraftStatus
 from xdraft.publish import service
@@ -20,8 +21,12 @@ class FakeX:
 
     def __init__(self, fail_on=None, status=500):
         self.posts, self.fail_on, self.status, self.token_calls = [], fail_on, status, []
+        self.uploads = []
 
     def handler(self, request: httpx.Request):
+        if request.url.path == "/2/media/upload" and request.method == "POST":
+            self.uploads.append(request.read())
+            return httpx.Response(200, json={"data": {"id": str(900 + len(self.uploads)), "media_key": "3_x"}})
         if request.url.path == "/2/oauth2/token":
             self.token_calls.append(parse_qs(request.content.decode()))
             return httpx.Response(200, json={"access_token": f"tok{len(self.token_calls)}",
@@ -59,6 +64,7 @@ def _connect(factory):
     q = parse_qs(urlparse(url).query)
     assert q["code_challenge_method"] == ["S256"] and q["state"] == [pending.state]
     assert "tweet.write" in q["scope"][0] and "offline.access" in q["scope"][0]
+    assert "media.write" in q["scope"][0]  # needed to upload images
     client.finish_login("the-code", pending)
     return client
 
@@ -111,6 +117,76 @@ def test_live_thread_and_metrics(cfg, x_env):
             None, {"in_reply_to_tweet_id": "101"}, {"in_reply_to_tweet_id": "102"}]
         assert service.refresh_metrics(cfg, s, factory) == 1
         assert d.metrics["like_count"] == 15 and d.metrics["reply_count"] == 6
+
+
+PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 64
+
+
+def test_thread_images_are_uploaded_and_attached(cfg, x_env):
+    fake, factory = x_env
+    cfg.publish.enabled = True
+    _connect(factory)
+    with Session(get_engine(cfg.resolve_path(cfg.db_path))) as s:
+        d = _draft(s, ["one", "two", "three"])
+        media.save_image(cfg, d, 0, PNG)
+        media.save_image(cfg, d, 2, PNG + b"a")
+        media.save_image(cfg, d, 2, PNG + b"b")
+        s.add(d)
+        s.commit()
+        service.approve(s, d)
+        service.publish_draft(cfg, s, d, factory)
+        assert d.status == DraftStatus.PUBLISHED, d.publish_error
+    assert len(fake.uploads) == 3
+    assert b'name="media_category"' in fake.uploads[0] and b"tweet_image" in fake.uploads[0]
+    assert PNG in fake.uploads[0]
+    assert [p[0].get("media") for p in fake.posts] == [
+        {"media_ids": ["901"]}, None, {"media_ids": ["902", "903"]}]
+
+
+def test_missing_image_file_fails_the_draft(cfg, x_env):
+    fake, factory = x_env
+    cfg.publish.enabled = True
+    _connect(factory)
+    with Session(get_engine(cfg.resolve_path(cfg.db_path))) as s:
+        d = _draft(s, ["one"])
+        name = media.save_image(cfg, d, 0, PNG)
+        s.add(d)
+        s.commit()
+        (media.media_dir(cfg, d.id) / name).unlink()
+        service.approve(s, d)
+        service.publish_draft(cfg, s, d, factory)
+        assert d.status == DraftStatus.FAILED and name in d.publish_error
+    assert fake.posts == []
+
+
+def test_dry_run_logs_images(cfg, x_env):
+    _fake, factory = x_env
+    with Session(get_engine(cfg.resolve_path(cfg.db_path))) as s:
+        d = _draft(s, ["one"])
+        name = media.save_image(cfg, d, 0, PNG)
+        s.add(d)
+        s.commit()
+        service.publish_draft(cfg, s, service.approve(s, d), factory)
+    assert name in cfg.resolve_path("data/publish.log").read_text()
+
+
+def test_save_image_validates(cfg):
+    with Session(get_engine(cfg.resolve_path(cfg.db_path))) as s:
+        d = _draft(s, ["one", "two"])
+        with pytest.raises(ValueError, match="PNG"):
+            media.save_image(cfg, d, 0, b"not an image")
+        with pytest.raises(ValueError, match="5 MB"):
+            media.save_image(cfg, d, 0, PNG + b"\x00" * (5 * 1024 * 1024))
+        with pytest.raises(ValueError, match="2"):
+            media.save_image(cfg, d, 2, PNG)  # only tweets 1..2 exist
+        for _ in range(4):
+            media.save_image(cfg, d, 1, PNG)
+        with pytest.raises(ValueError, match="4"):
+            media.save_image(cfg, d, 1, PNG)
+        assert [len(x) for x in media.images_for(d)] == [0, 4]
+        gone = d.images[1][0]
+        media.remove_image(cfg, d, 1, gone)
+        assert gone not in d.images[1] and not (media.media_dir(cfg, d.id) / gone).exists()
 
 
 def test_failed_thread_resumes_without_duplicates(cfg, x_env):

@@ -9,17 +9,18 @@ from collections.abc import Callable
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Annotated
 from zoneinfo import ZoneInfo
 
-from fastapi import FastAPI, Form, HTTPException, Request
-from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse, Response
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import func
 from sqlmodel import Session, col, select
 
 from xdraft.config import Config
-from xdraft import voice
+from xdraft import media, voice
 from xdraft.db import get_engine
 from xdraft.llm import LLM, LLMError, make_llm
 from xdraft.models import Draft, DraftStatus, Item, Topic, TopicStatus
@@ -156,7 +157,7 @@ def create_app(
     templates.env.globals.update(weighted_length=weighted_length, MAX_WEIGHTED=MAX_WEIGHTED,
                                  presets=REWRITE_PRESETS, preset_zh=PRESET_ZH, status_zh=STATUS_ZH,
                                  stage_zh=STAGE_ZH, cfg=cfg, next_slot_label=next_slot_label,
-                                 take_flash=take_flash,
+                                 take_flash=take_flash, images_for=media.images_for,
                                  # cache-buster so browsers pick up new CSS/JS after an update
                                  asset_v=int(max(p.stat().st_mtime for p in (HERE / "static").iterdir())))
     templates.env.filters["local"] = local
@@ -336,12 +337,51 @@ def create_app(
             if not tweets:
                 return card(request, s, d, error="草稿至少要有一条推文")
             d.tweets, d.edited, d.updated_at = tweets, True, utcnow()
+            d.images = media.images_for(d)  # keep images aligned when tweets were added or removed
             topic = s.get(Topic, d.topic_id) if d.topic_id else None
             d.warnings = run_checks(cfg, s, d, items_for_topic(s, topic) if topic else [])
             s.add(d)
             s.commit()
             s.refresh(d)
             return card(request, s, d, message="已保存")
+
+    @app.post("/drafts/{draft_id}/images", response_class=HTMLResponse)
+    async def add_image(request: Request, draft_id: int, file: Annotated[UploadFile, File()], tweet: int = Form(...)):
+        data = await file.read(media.MAX_BYTES + 1)
+        with Session(engine) as s:
+            d = get_draft(s, draft_id)
+            try:
+                media.save_image(cfg, d, tweet - 1, data)
+            except ValueError as e:
+                return card(request, s, d, error=str(e))
+            d.updated_at = utcnow()
+            s.add(d)
+            s.commit()
+            s.refresh(d)
+            return card(request, s, d, message=f"已添加配图到第 {tweet} 条")
+
+    @app.post("/drafts/{draft_id}/images/remove", response_class=HTMLResponse)
+    def remove_image(request: Request, draft_id: int, tweet: int = Form(...), name: str = Form(...)):
+        with Session(engine) as s:
+            d = get_draft(s, draft_id)
+            try:
+                media.remove_image(cfg, d, tweet - 1, name)
+            except ValueError as e:
+                return card(request, s, d, error=str(e))
+            d.updated_at = utcnow()
+            s.add(d)
+            s.commit()
+            s.refresh(d)
+            return card(request, s, d, message="已删除配图")
+
+    @app.get("/media/{draft_id}/{name}")
+    def serve_image(draft_id: int, name: str):
+        with Session(engine) as s:
+            d = s.get(Draft, draft_id)
+            path = media.image_path(cfg, d, name) if d else None
+        if path is None or not path.is_file():
+            raise HTTPException(404, "image not found")
+        return FileResponse(path, media_type=media.mime_for(name))
 
     @app.post("/drafts/{draft_id}/rewrite", response_class=HTMLResponse)
     def rewrite(request: Request, draft_id: int, preset: str = Form(""), instruction: str = Form("")):

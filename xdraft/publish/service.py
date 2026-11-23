@@ -11,6 +11,7 @@ from zoneinfo import ZoneInfo
 import httpx
 from sqlmodel import Session, col, select
 
+from xdraft import media
 from xdraft.config import Config
 from xdraft.models import Draft, DraftStatus
 from xdraft.pipeline.check import MAX_WEIGHTED, weighted_length
@@ -32,7 +33,8 @@ def _log_publication(cfg: Config, draft: Draft, mode: str) -> None:
     with path.open("a", encoding="utf-8") as fh:
         fh.write(json.dumps({
             "at": utcnow().isoformat(), "mode": mode, "draft_id": draft.id, "lang": draft.lang,
-            "tweets": draft.tweets, "tweet_ids": draft.tweet_ids, "error": draft.publish_error,
+            "tweets": draft.tweets, "images": media.images_for(draft), "tweet_ids": draft.tweet_ids,
+            "error": draft.publish_error,
         }, ensure_ascii=False) + "\n")
 
 
@@ -113,9 +115,17 @@ def publish_draft(cfg: Config, session: Session, draft: Draft, client_factory: C
 
     client = (client_factory or (lambda: make_x_client(cfg)))()
     ids = list(draft.tweet_ids or [])  # resume a thread that failed half-way
+    images = media.images_for(draft)
     try:
-        for text in draft.tweets[len(ids):]:
-            ids.append(client.post_tweet(text, reply_to=ids[-1] if ids else None))
+        for i in range(len(ids), len(draft.tweets)):
+            media_ids = []
+            for name in images[i]:
+                path = media.media_dir(cfg, draft.id) / name
+                if not path.is_file():
+                    raise XError(f"配图文件不见了：{path}")
+                media_ids.append(client.upload_image(name, path.read_bytes(), media.mime_for(name)))
+            ids.append(client.post_tweet(draft.tweets[i], reply_to=ids[-1] if ids else None,
+                                         media_ids=media_ids or None))
             draft.tweet_ids = list(ids)
             _touch(session, draft)
     except XRateLimited as e:

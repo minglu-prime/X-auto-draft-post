@@ -113,9 +113,13 @@ Then open http://127.0.0.1:8000 in your browser. Stop the dashboard with `Ctrl+C
 
 In the dashboard:
 
-1. **Topics**: see what is trending and your recent AI usage, click **Suggest topics** (or wait for the daily run), then **Write this** on the ones you like and **Dismiss** the rest.
-2. **Drafts**: each picked topic has a Chinese and an English card that went through write → polish → optimize. Edit inline (a line of `---` separates thread tweets), click an alternative opening to swap it in, or use **Rewrite with AI**. Then **Approve → next slot**, **Post now**, a custom **Schedule**, or **Reject**.
-3. **Inbox** saves quick notes, which are the strongest signal for topic choice. **History** shows what was posted, with likes, reposts, replies and views.
+The workbench (工作台) is one page with four steps: collect → pick topics → review → scheduled. The step bar highlights what to do next.
+
+1. **Topics (待选题)**: click **生成选题** (or wait for the daily run), write your own take on the ones you like, then **写这篇**. Trending terms and your AI usage are in the collapsed panel below.
+2. **Review (待审稿)**: each picked topic has a Chinese and an English card that went through write → polish → optimize. Edit inline (a line of `---` separates thread tweets) and attach images to any tweet: up to 4 per tweet, PNG/JPG/GIF/WEBP, 5 MB each. Then **批准** (next free slot) or **驳回**. Posting now, a custom time, AI rewrites, alternative openings and earlier versions are under **更多操作**.
+3. **笔记与文风** saves quick notes (the strongest signal for topic choice) and writing samples. **已发布** shows what was posted, with likes, reposts, replies and views.
+
+Images are stored in `data\media\<draft id>\` and uploaded to X when the tweet is posted.
 
 The same flow from the terminal, one command at a time:
 
@@ -160,7 +164,7 @@ Publishing is **off by default**. Approving a draft then only writes it to `data
 
 1. Create an app at developer.x.com with OAuth 2.0 enabled, type *Web App / native*, permissions **Read and write**, and callback URL `http://127.0.0.1:8000/x/callback`. Check X's current API plan and pricing for posting limits.
 2. Put `X_CLIENT_ID` (and `X_CLIENT_SECRET` for a confidential client) in `.env`.
-3. Run `uv run xdraft serve`, click **Connect X**, and authorize. The token is stored in `data\x_token.json` inside your project folder (readable only by you on macOS/Linux) and refreshed automatically.
+3. Run `uv run xdraft serve`, click **Connect X**, and authorize. xdraft asks for the `media.write` scope so it can upload images; if you connected before image support, disconnect and connect again. The token is stored in `data\x_token.json` inside your project folder (readable only by you on macOS/Linux) and refreshed automatically.
 4. Set `publish.enabled: true` in `config.yaml` and restart the dashboard. The header shows **LIVE posting**.
 
 Approved drafts go into the next free slot from `publish.slots` (in `timezone`, at most `max_per_slot` per slot), and are published within a minute of their slot while the dashboard runs, or within 5 minutes by the scheduled task. Threads are posted as replies; if one fails half-way, approving it again resumes where it stopped instead of posting duplicates. On a rate limit (429) the post is rescheduled automatically.

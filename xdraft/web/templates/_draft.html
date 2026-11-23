@@ -26,6 +26,35 @@
 
   {% if d.warnings %}<ul class="warnings">{% for w in d.warnings %}<li>{{ w }}</li>{% endfor %}</ul>{% endif %}
 
+  {% set editable = d.status in ('pending', 'failed', 'scheduled') %}
+  {% set imgs = images_for(d) %}
+  {% if editable or imgs|map('length')|sum %}
+  <div class="images">
+    {% for names in imgs %}{% if names %}{% set tno = loop.index %}
+    <div class="img-row">
+      <span class="img-label">第 {{ tno }} 条</span>
+      {% for n in names %}
+      <figure>
+        <a href="/media/{{ d.id }}/{{ n }}" target="_blank" rel="noopener"><img src="/media/{{ d.id }}/{{ n }}" alt="第 {{ tno }} 条推文的配图" loading="lazy"></a>
+        {% if editable %}<form data-post action="/drafts/{{ d.id }}/images/remove">
+          <input type="hidden" name="tweet" value="{{ tno }}"><input type="hidden" name="name" value="{{ n }}">
+          <button class="img-del" title="删除这张图" aria-label="删除这张图">×</button>
+        </form>{% endif %}
+      </figure>
+      {% endfor %}
+    </div>
+    {% endif %}{% endfor %}
+    {% if editable %}
+    <form data-post action="/drafts/{{ d.id }}/images" class="row img-upload">
+      <label>配图给第 <select name="tweet">{% for t in d.tweets %}<option value="{{ loop.index }}">{{ loop.index }}</option>{% endfor %}</select> 条</label>
+      <input type="file" name="file" accept="image/png,image/jpeg,image/gif,image/webp" required>
+      <button data-busy="上传中">上传配图</button>
+      <span class="muted hint">每条最多 4 张，PNG/JPG/GIF/WEBP，≤5 MB</span>
+    </form>
+    {% endif %}
+  </div>
+  {% endif %}
+
   {% if d.status in ('pending', 'failed') %}
   {% set slot = next_slot_label() %}
   <div class="row actions">
