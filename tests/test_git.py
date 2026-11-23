@@ -29,3 +29,22 @@ def test_commits_grouped_per_day(cfg, since, tmp_path):
     assert item.meta["insertions"] == 2 and item.meta["deletions"] == 1
     assert "Trim parser" in item.title and "+1 more" in item.title
     assert "abcdef123456" not in item.body
+
+
+def test_non_ascii_commits_on_non_utf8_locale(cfg, since, tmp_path, monkeypatch):
+    # Chinese Windows defaults to gbk; git emits UTF-8, so decoding must not use the locale.
+    repo = tmp_path / "demo"
+    repo.mkdir()
+    _git(repo, "init", "-q")
+    _git(repo, "config", "user.email", "dev@example.com")
+    _git(repo, "config", "user.name", "Dev")
+    (repo / "a.py").write_text("print(1)\n")
+    _git(repo, "add", ".")
+    subject = "修复 ‘quotes’ – done 😀"
+    _git(repo, "commit", "-q", "-m", subject)
+
+    monkeypatch.setattr(subprocess, "_text_encoding", lambda: "gbk")
+    cfg.git.repos = [str(repo)]
+    res = git_commits.collect(cfg, since)
+    assert res.errors == []
+    assert [c["subject"] for c in res.items[0].meta["commits"]] == [subject]
