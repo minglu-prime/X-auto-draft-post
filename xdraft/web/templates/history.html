@@ -11,7 +11,7 @@
   <tbody>
   {% for d in drafts %}
   <tr>
-    <td class="nowrap">{{ (d.published_at or d.updated_at).strftime('%m-%d %H:%M') }}</td>
+    <td class="nowrap">{{ (d.published_at or d.updated_at)|local }}</td>
     <td><span class="badge st-{{ d.status }}">{{ d.status.replace('_', ' ') }}</span> <span class="muted">{{ d.lang }}</span></td>
     <td>{% if d.tweet_ids %}<a href="https://x.com/i/web/status/{{ d.tweet_ids[0] }}" target="_blank" rel="noopener noreferrer">{{ d.tweets[0][:120] }}</a>{% else %}{{ d.tweets[0][:120] }}{% endif %}{% if d.tweets|length > 1 %} <span class="muted">(+{{ d.tweets|length - 1 }})</span>{% endif %}</td>
     <td class="num">{{ d.metrics.get('like_count', '–') }}</td>

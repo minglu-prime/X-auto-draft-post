@@ -4,11 +4,19 @@ Turns **your own AI usage** (Claude Code sessions, git commits, quick notes), **
 
 See [docs/PLAN.md](docs/PLAN.md) for the design and the survey of similar projects.
 
-```
-collectors ─► SQLite ─► LLM: pick topics ─► LLM: zh + en drafts ─► checks ─► dashboard (edit / rewrite / approve) ─► X (or dry run)
-                                                                                         ▲
-                                                          engagement metrics ────────────┘ (fed back into topic picking)
-```
+## The pipeline
+
+| Step | What happens | Where |
+|---|---|---|
+| 0. Collect | Your Claude Code sessions, notes, commits; AI blogs, arXiv; **trends**: HN front page, fast-rising GitHub repos, Reddit, Product Hunt, 36Kr / 少数派 | `xdraft collect`, or daily automatically |
+| 1. Topics (选题) | Trend signals (terms spreading across sources, weighted by HN points / stars) + a summary of your own AI usage → 5–10 topic suggestions, each with *why now*, *your experience*, an angle, format and score. **You pick.** | **Topics** page, `xdraft suggest` |
+| 2. Write (撰写) | Chinese + English first drafts in your style | "Write this" / `xdraft write ID` |
+| 3. Polish (润色) | Voice and natural language: no 翻译腔, no hype words, facts unchanged | automatic |
+| 4. Optimize (优化) | Stronger hook, skimmable structure, fixes for every check warning, 2–3 alternative openings; re-runs while length checks still fail | automatic |
+| 5. Review | Edit, swap in an alternative opening, AI rewrite, see earlier versions | **Drafts** page |
+| 6. Publish (发布) | Approve → next free posting slot (default 09:00 and 20:00 local time) → posted to X (dry run until enabled); engagement is fed back into step 1 | automatic |
+
+With `xdraft serve` running, steps 0–1 run every day at `pipeline.auto_suggest_at` (default 08:30 local time) and approved posts publish on their own. Without the dashboard, put `xdraft run` (collect + suggest + publish due) in cron.
 
 ## Status
 
@@ -19,6 +27,7 @@ collectors ─► SQLite ─► LLM: pick topics ─► LLM: zh + en drafts ─�
 | M3 local review dashboard (`xdraft serve`) | ✅ |
 | M4 publishing to X: OAuth 2.0, threads, scheduling, dry run by default | ✅ |
 | M5 style import from your X archive + engagement feedback | ✅ |
+| Content pipeline: trend-based topic suggestions → write → polish → optimize → slot publishing | ✅ |
 
 ## Setup
 
@@ -42,19 +51,26 @@ uv run xdraft style-import ~/Downloads/twitter-archive
 uv run xdraft serve        # http://127.0.0.1:8000
 ```
 
-In the dashboard: **Collect material**, then **Generate drafts**. Each topic gets a Chinese and an English card. Edit them inline (a line of `---` separates thread tweets), use **Rewrite with AI** (shorter / punchier / more personal / your own instruction), then **Approve & post now**, **Schedule**, or **Reject**. The **Inbox** page saves quick notes, which are the strongest signal for topic choice. **History** shows what was posted, with likes, reposts, replies and views.
+In the dashboard:
+
+1. **Topics**: see what is trending and your recent AI usage, click **Suggest topics** (or wait for the daily run), then **Write this** on the ones you like and **Dismiss** the rest.
+2. **Drafts**: each picked topic has a Chinese and an English card that went through write → polish → optimize. Edit inline (a line of `---` separates thread tweets), click an alternative opening to swap it in, or use **Rewrite with AI**. Then **Approve → next slot**, **Post now**, a custom **Schedule**, or **Reject**.
+3. **Inbox** saves quick notes, which are the strongest signal for topic choice. **History** shows what was posted, with likes, reposts, replies and views.
 
 The same flow from the terminal:
 
 ```bash
 uv run xdraft collect                 # gather the last 3 days
-uv run xdraft draft                   # pick topics + write drafts (add --collect to do both)
+uv run xdraft suggest                 # trends + usage → topic suggestions (add --collect to do both)
+uv run xdraft topics                  # list suggestions
+uv run xdraft write 12 15             # write → polish → optimize the picked topics
 uv run xdraft drafts                  # list pending drafts
-uv run xdraft publish-due             # post approved drafts that are due (for cron)
+uv run xdraft run                     # cron: collect + suggest + publish due posts
+uv run xdraft publish-due             # post approved drafts that are due
 uv run xdraft metrics                 # refresh engagement numbers
 ```
 
-Each draft is checked against X's weighted length (CJK counts double, URLs count 23), links that are not in the sources, numbers that are not in the sources, near-duplicates of recent posts, and leaked secrets or emails. Drafts over 280 cannot be approved.
+A picked topic costs 3–5 LLM calls (write, polish, 1–3 optimize passes); a suggestion run costs 1. Each draft is checked against X's weighted length (CJK counts double, URLs count 23), links that are not in the sources, numbers that are not in the sources, near-duplicates of recent posts, and leaked secrets or emails. Drafts over 280 cannot be approved.
 
 ## Posting to X
 
@@ -65,7 +81,7 @@ Publishing is **off by default**. Approving a draft then only writes it to `data
 3. Run `xdraft serve`, click **Connect X**, and authorize. The token is stored in `data/x_token.json` with mode 600 and refreshed automatically.
 4. Set `publish.enabled: true` in `config.yaml` and restart. The header shows **LIVE posting**.
 
-While `xdraft serve` runs, scheduled drafts are published every minute and metrics refresh every `publish.metrics_every_minutes`. Without the dashboard running, use cron: `*/5 * * * * cd /path/to/repo && uv run xdraft publish-due`. Threads are posted as replies; if one fails half-way, approving it again resumes where it stopped instead of posting duplicates. On a rate limit (429) the post is rescheduled automatically.
+Approved drafts go into the next free slot from `publish.slots` (in `timezone`, at most `max_per_slot` per slot). While `xdraft serve` runs, due drafts are published every minute and metrics refresh every `publish.metrics_every_minutes`. Without the dashboard running, use cron: `*/5 * * * * cd /path/to/repo && uv run xdraft publish-due`, plus a daily `uv run xdraft run`. Threads are posted as replies; if one fails half-way, approving it again resumes where it stopped instead of posting duplicates. On a rate limit (429) the post is rescheduled automatically.
 
 ## Sources
 
@@ -74,7 +90,7 @@ While `xdraft serve` runs, scheduled drafts are published every minute and metri
 | `claude_code` | `~/.claude/projects/*/*.jsonl` | session: project, models, tool counts, your prompts |
 | `notes` | `notes/inbox/*.md` (optional YAML frontmatter: `title`, `date`, `tags`, `url`) | note |
 | `git` | `git log` of repos in `config.yaml` | repo × day |
-| `articles` | RSS/Atom feeds (blogs, arXiv) + Hacker News stories above `min_points`, keyword-filtered | article |
+| `articles` | RSS/Atom feeds (AI blogs, arXiv, Reddit, Product Hunt, 36Kr, 少数派), Hacker News stories above `min_points` (all tech by default), new GitHub repos gaining stars fastest | article / repo |
 
 ## Privacy and safety
 

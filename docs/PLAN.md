@@ -67,3 +67,14 @@ tests/  (fixtures: sample Claude Code jsonl, RSS xml)
 - `pytest`: each collector parses its fixtures; redaction tests (sample jsonl containing a fake key must have it removed); character-count/thread-splitting tests; dry-run publish tests (tweepy mocked).
 - End to end: `xdraft collect && xdraft draft` against real `~/.claude/projects` → `xdraft serve` → open 127.0.0.1:8000 in a browser to check the draft queue → approve one → it shows up in the log as a dry-run post → after enabling `PUBLISH_ENABLED` and posting one test post to a test account, check it on X.
 - Note: this cloud session can't access the Claude Code logs on your machine, so M1 is developed against fixtures here; real-data checks run on your machine.
+
+## Content pipeline (added after M5)
+
+Goal: topic suggestions from recent tech trends + my AI usage, and an automated chain from topic to post.
+
+1. **Trend sources**: HN front page (all tech), GitHub search API for new repos gaining stars, Reddit (r/LocalLLaMA, r/MachineLearning) and Product Hunt RSS, and Chinese tech media RSS (36Kr, 少数派; 机器之心 via RSSHub if self-hosted). Each feed has a `category`.
+2. **Trend analysis** (`pipeline/trends.py`, deterministic): name-like terms and their pairs, scored by number of sources, mentions and heat (HN points / stars). Also a summary of my own usage (sessions, models, tools, commits, notes). Material sent to the LLM always includes my own items, then the hottest trend-related articles.
+3. **选题 Suggest**: the LLM gets trends + usage + material and returns 5–10 topics, each with why now, my connection, angle, format and score. They are saved as `suggested` and wait for me to pick.
+4. **撰写 → 润色 → 优化 Write → polish → optimize**: separate LLM passes. Optimize receives the check warnings and returns alternative hooks, then re-runs while hard checks (length) fail. Each stage is kept in `Draft.revisions`. If polish or optimize fails, the draft falls back to the previous stage with a warning.
+5. **发布 Publish**: approving puts the draft in the next free slot (`publish.slots`, `timezone`, `max_per_slot`). `serve` runs collect + suggest daily at `pipeline.auto_suggest_at`; `xdraft run` does the same from cron.
+6. Old databases get new columns through a small add-column migration in `db.get_engine`.

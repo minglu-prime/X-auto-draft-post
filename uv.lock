@@ -1542,6 +1542,7 @@ dependencies = [
     { name = "pyyaml" },
     { name = "sqlmodel" },
     { name = "typer" },
+    { name = "tzdata" },
     { name = "uvicorn" },
 ]
 
@@ -1568,6 +1569,7 @@ requires-dist = [
     { name = "sqlmodel", specifier = ">=0.0.22" },
     { name = "trafilatura", marker = "extra == 'fulltext'", specifier = ">=1.12" },
     { name = "typer", specifier = ">=0.12" },
+    { name = "tzdata", specifier = ">=2026.6" },
     { name = "uvicorn", specifier = ">=0.54.0" },
 ]
 provides-extras = ["fulltext"]

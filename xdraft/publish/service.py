@@ -5,7 +5,8 @@ from __future__ import annotations
 import json
 import logging
 from collections.abc import Callable
-from datetime import datetime, timedelta
+from datetime import datetime, time, timedelta
+from zoneinfo import ZoneInfo
 
 import httpx
 from sqlmodel import Session, col, select
@@ -40,6 +41,32 @@ def _touch(session: Session, draft: Draft) -> None:
     session.add(draft)
     session.commit()
     session.refresh(draft)
+
+
+def slot_times(cfg: Config, after: datetime, days: int = 14) -> list[datetime]:
+    """Upcoming posting slots (configured local times) as UTC datetimes, earliest first."""
+    tz = ZoneInfo(cfg.timezone)
+    local_after = to_utc(after).astimezone(tz)
+    slots = []
+    for spec in cfg.publish.slots:
+        hh, mm = (int(x) for x in spec.split(":"))
+        for day in range(days + 1):
+            d = local_after.date() + timedelta(days=day)
+            slots.append(datetime.combine(d, time(hh, mm), tzinfo=tz).astimezone(ZoneInfo("UTC")))
+    return sorted(s for s in slots if s > to_utc(after))
+
+
+def next_free_slot(cfg: Config, session: Session, after: datetime | None = None) -> datetime | None:
+    """First slot at least 5 minutes away that has fewer than max_per_slot posts."""
+    start = (after or utcnow()) + timedelta(minutes=5)
+    taken = [to_utc(d.scheduled_at) for d in session.exec(select(Draft).where(
+        col(Draft.status).in_([DraftStatus.SCHEDULED, DraftStatus.PUBLISHED, DraftStatus.DRY_RUN]),
+        col(Draft.scheduled_at) >= start - timedelta(minutes=1),
+    )).all() if d.scheduled_at]
+    for slot in slot_times(cfg, start):
+        if sum(1 for t in taken if abs((t - slot).total_seconds()) < 60) < cfg.publish.max_per_slot:
+            return slot
+    return None
 
 
 def approve(session: Session, draft: Draft, when: datetime | None = None) -> Draft:

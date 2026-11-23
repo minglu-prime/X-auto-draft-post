@@ -16,6 +16,7 @@ dependencies = [
     "python-multipart>=0.0.34",
     "apscheduler>=3.11.3",
     "openai>=3.57.0",
+    "tzdata>=2026.6",
 ]
 
 [project.optional-dependencies]

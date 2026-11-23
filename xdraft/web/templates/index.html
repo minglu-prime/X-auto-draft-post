@@ -5,17 +5,13 @@
     <label>Days <input type="number" name="days" min="1" max="60" value="{{ cfg.lookback_days }}"></label>
     <button>Collect material</button>
   </form>
-  <form data-post action="/generate" data-target="#run-result">
-    <label>Days <input type="number" name="days" min="1" max="60" value="{{ cfg.lookback_days }}"></label>
-    <label>Topics <input type="number" name="topics" min="1" max="10" value="{{ cfg.draft.topics_per_run }}"></label>
-    <button class="primary">Generate drafts</button>
-  </form>
-  <span class="muted">{{ n_items }} items collected</span>
+  <a class="button primary" href="/topics">Pick topics →</a>
+  <span class="muted">{{ n_items }} items collected · next free slot: {{ next_slot_label() or 'none' }} ({{ cfg.timezone }})</span>
 </section>
 <div id="run-result" class="result"></div>
 
 {% if not groups %}
-<p class="empty">No drafts waiting. Collect material, then generate drafts.</p>
+<p class="empty">No drafts waiting. Go to <a href="/topics">Topics</a>, get suggestions and pick the ones to write.</p>
 {% endif %}
 
 {% for g in groups %}

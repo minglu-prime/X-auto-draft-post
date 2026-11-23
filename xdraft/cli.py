@@ -109,34 +109,109 @@ def print_drafts(drafts: list[Draft], topics: dict[int, Topic]) -> None:
             console.print(f"⚠ {w}", style="yellow", markup=False)
 
 
+def print_topics(topics: list[Topic]) -> None:
+    for t in topics:
+        console.rule(f"topic #{t.id} [{t.status}] score {t.score} — {t.title}")
+        console.print(f"Angle: {t.angle}", markup=False, highlight=False)
+        console.print(f"Why now: {t.why}", markup=False, highlight=False)
+        if t.my_connection:
+            console.print(f"My experience: {t.my_connection}", markup=False, highlight=False)
+        if t.trend_terms:
+            console.print("Trends: " + ", ".join(t.trend_terms), style="dim", markup=False)
+
+
 @app.command()
-def draft(
+def suggest(
     days: Optional[int] = typer.Option(None, "--days", "-d", help="Use material from the last N days."),
-    topics: Optional[int] = typer.Option(None, "--topics", "-t", help="Number of topics (default: draft.topics_per_run)."),
+    count: Optional[int] = typer.Option(None, "--count", "-n", help="Number of suggestions (default: pipeline.suggest_count)."),
     collect_first: bool = typer.Option(False, "--collect", help="Run all collectors first."),
     config: Optional[Path] = ConfigOpt,
 ) -> None:
-    """Pick topics from collected material and write bilingual drafts for review."""
-    from xdraft.pipeline.generate import generate
+    """Step 1: suggest topics from tech trends + your own AI usage. Pick them with `xdraft write`."""
+    from xdraft.pipeline.generate import suggest_topics, trend_snapshot
+    from xdraft.pipeline.trends import format_trends
 
     cfg = load_config(config)
     since = utcnow() - timedelta(days=days if days is not None else cfg.lookback_days)
     if collect_first:
         run_collect(cfg, since)
     engine = get_engine(cfg.resolve_path(cfg.db_path))
-    try:
-        llm = make_llm(cfg.llm)
-        with Session(engine) as session:
-            created = generate(cfg, llm, session, since, topics)
-            topic_map = {t.id: t for t in session.exec(select(Topic)).all()}
-    except LLMError as e:
-        console.print(f"[red]{e}[/red]")
-        raise typer.Exit(1) from e
-    if not created:
-        console.print("No drafts created (no material in the window, or no topic found). Try `xdraft collect` first.")
+    with Session(engine) as session:
+        snap = trend_snapshot(cfg, session, since)
+        console.rule("Trend signals")
+        console.print(format_trends(snap.terms), markup=False, highlight=False)
+        console.rule("Your AI usage")
+        console.print(snap.usage, markup=False, highlight=False)
+        try:
+            topics = suggest_topics(cfg, make_llm(cfg.llm), session, since, count)
+        except LLMError as e:
+            console.print(f"[red]{e}[/red]")
+            raise typer.Exit(1) from e
+        print_topics(topics)
+    if not topics:
+        console.print("No suggestions (no material in the window). Try `xdraft collect` first.")
         return
-    print_drafts(created, topic_map)
-    console.print(f"\n{len(created)} drafts are waiting for review: run `xdraft serve` and open http://127.0.0.1:8000")
+    console.print(f"\nPick topics in the dashboard (`xdraft serve`) or run: xdraft write {topics[0].id} …")
+
+
+@app.command()
+def topics(
+    status: str = typer.Option("suggested", "--status", help="suggested | drafted | dismissed | all"),
+    limit: int = typer.Option(20, "--limit", "-n"),
+    config: Optional[Path] = ConfigOpt,
+) -> None:
+    """List topic suggestions."""
+    cfg = load_config(config)
+    with Session(get_engine(cfg.resolve_path(cfg.db_path))) as session:
+        q = select(Topic).order_by(Topic.id.desc()).limit(limit)
+        if status != "all":
+            q = q.where(Topic.status == status)
+        print_topics(list(session.exec(q).all()))
+
+
+@app.command()
+def write(
+    topic_ids: list[int] = typer.Argument(..., help="Topic ids to write (see `xdraft topics`)."),
+    config: Optional[Path] = ConfigOpt,
+) -> None:
+    """Steps 2-4: write → polish → optimize bilingual drafts for the picked topics."""
+    from xdraft.pipeline.generate import produce_drafts
+
+    cfg = load_config(config)
+    with Session(get_engine(cfg.resolve_path(cfg.db_path))) as session:
+        llm = make_llm(cfg.llm)
+        topic_map = {t.id: t for t in session.exec(select(Topic)).all()}
+        for tid in topic_ids:
+            topic = topic_map.get(tid)
+            if not topic:
+                console.print(f"[yellow]No topic #{tid}[/yellow]")
+                continue
+            try:
+                created = produce_drafts(cfg, llm, session, topic)
+            except LLMError as e:
+                console.print(f"[red]topic #{tid}: {e}[/red]")
+                continue
+            print_drafts(created, topic_map)
+    console.print("\nReview and approve them in the dashboard: `xdraft serve`.")
+
+
+@app.command()
+def run(config: Optional[Path] = ConfigOpt) -> None:
+    """Automation entry point (cron): collect → trends → topic suggestions, then publish due posts."""
+    from xdraft.pipeline.generate import suggest_topics
+    from xdraft.publish.service import publish_due
+
+    cfg = load_config(config)
+    since = utcnow() - timedelta(days=cfg.lookback_days)
+    run_collect(cfg, since)
+    with Session(get_engine(cfg.resolve_path(cfg.db_path))) as session:
+        try:
+            topics = suggest_topics(cfg, make_llm(cfg.llm), session, since)
+            console.print(f"{len(topics)} new topic suggestions waiting in the dashboard.")
+        except LLMError as e:
+            console.print(f"[red]{e}[/red]")
+        for d in publish_due(cfg, session):
+            console.print(f"draft #{d.id} [{d.lang}] -> {d.status}")
 
 
 @app.command()

@@ -26,13 +26,23 @@ class Item(SQLModel, table=True):
     updated_at: datetime
 
 
+class TopicStatus:
+    SUGGESTED = "suggested"  # waiting for the author to pick it
+    DRAFTED = "drafted"      # picked; drafts written
+    DISMISSED = "dismissed"
+
+
 class Topic(SQLModel, table=True):
-    """A post idea chosen by the LLM from a set of items."""
+    """A topic suggestion: a trend + the author's own experience + an angle."""
 
     id: int | None = Field(default=None, primary_key=True)
     title: str
     angle: str  # the personal take / hook
-    why: str = ""
+    why: str = ""  # why now: the trend evidence
+    my_connection: str = ""  # the author's own usage that relates to it
+    format: str = "single"  # single | thread
+    trend_terms: list = Field(default_factory=list, sa_column=Column(JSON))
+    status: str = Field(default=TopicStatus.SUGGESTED, index=True)
     score: int = 0
     item_ids: list = Field(default_factory=list, sa_column=Column(JSON))
     created_at: datetime
@@ -65,6 +75,9 @@ class Draft(SQLModel, table=True):
     tweet_ids: list = Field(default_factory=list, sa_column=Column(JSON))
     publish_error: str | None = None
     metrics: dict = Field(default_factory=dict, sa_column=Column(JSON))
+    stage: str = "written"  # written → polished → optimized (last pipeline stage reached)
+    revisions: list = Field(default_factory=list, sa_column=Column(JSON))  # [{stage, tweets}]
+    alt_hooks: list = Field(default_factory=list, sa_column=Column(JSON))  # alternative first lines
     created_at: datetime
     updated_at: datetime
 

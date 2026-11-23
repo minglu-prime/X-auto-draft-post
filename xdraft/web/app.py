@@ -8,6 +8,7 @@ from collections.abc import Callable
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from fastapi import FastAPI, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse, Response
@@ -19,13 +20,21 @@ from sqlmodel import Session, col, select
 from xdraft.config import Config
 from xdraft.db import get_engine
 from xdraft.llm import LLM, LLMError, make_llm
-from xdraft.models import Draft, DraftStatus, Item, Topic
+from xdraft.models import Draft, DraftStatus, Item, Topic, TopicStatus
 from xdraft.pipeline.check import MAX_WEIGHTED, weighted_length
-from xdraft.pipeline.generate import generate, items_for_topic, load_style, rewrite_post, run_checks
+from xdraft.pipeline.generate import (
+    items_for_topic,
+    load_style,
+    produce_drafts,
+    rewrite_post,
+    run_checks,
+    suggest_topics,
+    trend_snapshot,
+)
 from xdraft.publish import service
 from xdraft.publish.x import PendingAuth, XClient, XError
 from xdraft.runner import run_collect
-from xdraft.timeutil import utcnow
+from xdraft.timeutil import to_utc, utcnow
 
 log = logging.getLogger(__name__)
 HERE = Path(__file__).parent
@@ -61,6 +70,16 @@ def create_app(
             for d in service.publish_due(cfg, s, x_client_factory):
                 log.info("draft #%s -> %s", d.id, d.status)
 
+    def suggest_job() -> None:
+        since = utcnow() - timedelta(days=cfg.lookback_days)
+        try:
+            run_collect(cfg, since)
+            with Session(engine) as s:
+                topics = suggest_topics(cfg, llm_factory(), s, since)
+            log.info("daily run: %d topic suggestions", len(topics))
+        except Exception as e:  # noqa: BLE001 - keep the scheduler alive
+            log.warning("daily suggest failed: %s", e)
+
     def metrics_job() -> None:
         try:
             with Session(engine) as s:
@@ -76,6 +95,10 @@ def create_app(
 
             scheduler = BackgroundScheduler(timezone="UTC")
             scheduler.add_job(publish_job, "interval", seconds=60, id="publish", max_instances=1, coalesce=True)
+            if cfg.pipeline.auto_suggest_at:
+                hh, mm = (int(x) for x in cfg.pipeline.auto_suggest_at.split(":"))
+                scheduler.add_job(suggest_job, "cron", hour=hh, minute=mm, timezone=cfg.timezone,
+                                  id="suggest", max_instances=1, coalesce=True)
             if cfg.publish.enabled:
                 scheduler.add_job(metrics_job, "interval", minutes=cfg.publish.metrics_every_minutes,
                                   id="metrics", max_instances=1, coalesce=True)
@@ -87,8 +110,19 @@ def create_app(
     app = FastAPI(title="xdraft", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
     app.mount("/static", StaticFiles(directory=HERE / "static"), name="static")
     templates = Jinja2Templates(directory=HERE / "templates")
+    tz = ZoneInfo(cfg.timezone)
+
+    def local(dt: datetime | None, fmt: str = "%m-%d %H:%M") -> str:
+        return to_utc(dt).astimezone(tz).strftime(fmt) if dt else ""
+
+    def next_slot_label() -> str:
+        with Session(engine) as s:
+            slot = service.next_free_slot(cfg, s)
+        return local(slot, "%a %m-%d %H:%M") if slot else ""
+
     templates.env.globals.update(weighted_length=weighted_length, MAX_WEIGHTED=MAX_WEIGHTED,
-                                 presets=REWRITE_PRESETS, cfg=cfg)
+                                 presets=REWRITE_PRESETS, cfg=cfg, next_slot_label=next_slot_label)
+    templates.env.filters["local"] = local
 
     @app.middleware("http")
     async def guard(request: Request, call_next):
@@ -134,6 +168,76 @@ def create_app(
             return templates.TemplateResponse(request, "index.html", {
                 "groups": list(groups.values()), "n_items": n_items, "x": x_status(),
             })
+
+    @app.get("/topics", response_class=HTMLResponse)
+    def topics_page(request: Request):
+        with Session(engine) as s:
+            topics = s.exec(select(Topic).where(Topic.status == TopicStatus.SUGGESTED)
+                            .order_by(col(Topic.created_at).desc(), col(Topic.score).desc()).limit(40)).all()
+            items = {t.id: items_for_topic(s, t) for t in topics}
+            snap = trend_snapshot(cfg, s, utcnow() - timedelta(days=cfg.lookback_days))
+            return templates.TemplateResponse(request, "topics.html", {
+                "topics": topics, "items": items, "snap": snap, "x": x_status(),
+            })
+
+    def topic_card(request: Request, s: Session, t: Topic, message: str = "", error: str = "") -> HTMLResponse:
+        return templates.TemplateResponse(request, "_topic.html", {
+            "t": t, "topic_items": items_for_topic(s, t), "message": message, "error": error,
+        })
+
+    @app.post("/suggest")
+    def suggest(days: int = Form(0), count: int = Form(0)):
+        since = utcnow() - timedelta(days=days or cfg.lookback_days)
+        try:
+            with Session(engine) as s:
+                created = suggest_topics(cfg, llm_factory(), s, since, count or None)
+        except LLMError as e:
+            return HTMLResponse(f"<p class='warn'>{e}</p>")
+        if not created:
+            return HTMLResponse("<p class='warn'>No suggestions: collect some material first.</p>")
+        return Response(status_code=204, headers={"X-Redirect": "/topics"})
+
+    @app.post("/topics/{topic_id}/write", response_class=HTMLResponse)
+    def write_topic(request: Request, topic_id: int):
+        with Session(engine) as s:
+            t = s.get(Topic, topic_id)
+            if not t:
+                raise HTTPException(404, "topic not found")
+            if t.status != TopicStatus.SUGGESTED:
+                return topic_card(request, s, t, error=f"Already {t.status}")
+            try:
+                drafts = produce_drafts(cfg, llm_factory(), s, t)
+            except LLMError as e:
+                return topic_card(request, s, t, error=str(e))
+            return topic_card(request, s, t, message=f"Written, polished and optimized: {len(drafts)} drafts are in the Queue")
+
+    @app.post("/topics/{topic_id}/dismiss", response_class=HTMLResponse)
+    def dismiss_topic(topic_id: int):
+        with Session(engine) as s:
+            t = s.get(Topic, topic_id)
+            if t and t.status == TopicStatus.SUGGESTED:
+                t.status = TopicStatus.DISMISSED
+                s.add(t)
+                s.commit()
+        return HTMLResponse("")
+
+    @app.post("/drafts/{draft_id}/hook", response_class=HTMLResponse)
+    def use_hook(request: Request, draft_id: int, index: int = Form(...)):
+        with Session(engine) as s:
+            d = get_draft(s, draft_id)
+            if not (0 <= index < len(d.alt_hooks)) or not d.tweets:
+                return card(request, s, d, error="Unknown hook")
+            first, _, rest = d.tweets[0].partition("\n")
+            new_hook = d.alt_hooks[index]
+            d.alt_hooks = [h for i, h in enumerate(d.alt_hooks) if i != index] + [first]
+            d.tweets = [new_hook + ("\n" + rest if rest else "")] + d.tweets[1:]
+            d.edited, d.updated_at = True, utcnow()
+            topic = s.get(Topic, d.topic_id) if d.topic_id else None
+            d.warnings = run_checks(cfg, s, d, items_for_topic(s, topic) if topic else [])
+            s.add(d)
+            s.commit()
+            s.refresh(d)
+            return card(request, s, d, message="Hook swapped (the old one is kept as an alternative)")
 
     @app.get("/history", response_class=HTMLResponse)
     def history(request: Request):
@@ -193,27 +297,32 @@ def create_app(
             return card(request, s, d, message="Rewritten")
 
     @app.post("/drafts/{draft_id}/approve", response_class=HTMLResponse)
-    def approve(request: Request, draft_id: int, when: str = Form(""), tz_offset: int = Form(0)):
+    def approve(request: Request, draft_id: int, mode: str = Form("slot"), when: str = Form(""),
+                tz_offset: int = Form(0)):
         with Session(engine) as s:
             d = get_draft(s, draft_id)
             at = None
-            if when:
+            if mode == "custom":
                 try:
-                    local = datetime.fromisoformat(when)
+                    local_dt = datetime.fromisoformat(when)
                 except ValueError:
                     return card(request, s, d, error="Invalid date/time")
                 # Browser offset is minutes *behind* UTC (getTimezoneOffset).
-                at = (local + timedelta(minutes=tz_offset)).replace(tzinfo=timezone.utc)
+                at = (local_dt + timedelta(minutes=tz_offset)).replace(tzinfo=timezone.utc)
+            elif mode == "slot":
+                at = service.next_free_slot(cfg, s)
+                if at is None:
+                    return card(request, s, d, error="No free slot in the next 14 days; add slots in config")
             try:
                 service.approve(s, d, at)
             except ValueError as e:
                 return card(request, s, d, error=str(e))
-            if at is None:  # "post now": publish right away instead of waiting for the scheduler
+            if mode == "now":  # publish right away instead of waiting for the scheduler
                 service.publish_draft(cfg, s, d, x_client_factory)
                 msg = {DraftStatus.DRY_RUN: "Dry run: logged, not posted (publish.enabled is false)",
                        DraftStatus.PUBLISHED: "Posted to X"}.get(d.status, "")
                 return card(request, s, d, message=msg, error=d.publish_error or "")
-            return card(request, s, d, message=f"Scheduled for {d.scheduled_at:%Y-%m-%d %H:%M} UTC")
+            return card(request, s, d, message=f"Scheduled for {local(d.scheduled_at, '%a %m-%d %H:%M')} ({cfg.timezone})")
 
     @app.post("/drafts/{draft_id}/unschedule", response_class=HTMLResponse)
     def unschedule(request: Request, draft_id: int):
@@ -257,18 +366,6 @@ def create_app(
         )
         errs = "".join(f"<li class='warn'>{r.source}: {e}</li>" for r in reports for e in r.errors)
         return HTMLResponse(f"<ul>{rows}{errs}</ul>")
-
-    @app.post("/generate")
-    def run_generate(days: int = Form(0), topics: int = Form(0)):
-        since = utcnow() - timedelta(days=days or cfg.lookback_days)
-        try:
-            with Session(engine) as s:
-                created = generate(cfg, llm_factory(), s, since, topics or None)
-        except LLMError as e:
-            return HTMLResponse(f"<p class='warn'>{e}</p>")
-        if not created:
-            return HTMLResponse("<p class='warn'>No drafts: collect some material first.</p>")
-        return Response(status_code=204, headers={"X-Redirect": "/"})
 
     # ---- X account -------------------------------------------------------------
     @app.get("/x/login")

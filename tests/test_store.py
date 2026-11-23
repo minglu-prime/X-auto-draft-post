@@ -35,3 +35,19 @@ def test_run_collect_upserts(cfg, since):
     assert len(rows) == 2
     cc = next(r for r in rows if r.source == "claude_code")
     assert "one more thing" in cc.body and cc.meta["n_user_prompts"] == 3
+
+
+def test_old_database_gets_new_columns(tmp_path):
+    import sqlite3
+
+    from xdraft.db import get_engine as ge
+
+    db = tmp_path / "old.db"
+    con = sqlite3.connect(db)
+    con.execute("CREATE TABLE topic (id INTEGER PRIMARY KEY, title VARCHAR NOT NULL, angle VARCHAR NOT NULL, "
+                "why VARCHAR, score INTEGER, item_ids JSON, created_at DATETIME)")
+    con.commit()
+    con.close()
+    ge(db)
+    cols = {r[1] for r in sqlite3.connect(db).execute("PRAGMA table_info(topic)")}
+    assert {"status", "my_connection", "trend_terms", "format"} <= cols

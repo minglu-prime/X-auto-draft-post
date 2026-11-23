@@ -11,7 +11,8 @@
 <header class="top">
   <strong class="brand">xdraft</strong>
   <nav>
-    <a href="/" {% if request.url.path == '/' %}class="on"{% endif %}>Queue</a>
+    <a href="/topics" {% if request.url.path == '/topics' %}class="on"{% endif %}>1 Topics</a>
+    <a href="/" {% if request.url.path == '/' %}class="on"{% endif %}>2 Drafts</a>
     <a href="/sources" {% if request.url.path == '/sources' %}class="on"{% endif %}>Sources</a>
     <a href="/inbox" {% if request.url.path == '/inbox' %}class="on"{% endif %}>Inbox</a>
     <a href="/history" {% if request.url.path == '/history' %}class="on"{% endif %}>History</a>

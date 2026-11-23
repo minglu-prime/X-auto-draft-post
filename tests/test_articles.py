@@ -53,6 +53,7 @@ def test_feeds_and_hackernews(cfg, since):
         FeedConfig(name="Broken", url="https://broken.example/feed"),
     ]
     cfg.articles.hackernews.enabled = True
+    cfg.articles.hackernews.keyword_filter = True
     res = articles.collect(cfg, since, client=client)
 
     titles = {i.title for i in res.items}
@@ -68,3 +69,20 @@ def test_keyword_matcher_word_boundaries():
     m = articles.keyword_matcher(["AI", "LLM"])
     assert m("New AI chips") and m("Two LLMs compared")
     assert not m("Airbnb raises prices") and not m("said hello")
+
+
+def test_github_rising_repos_and_all_tech_hn(cfg, since):
+    gh = {"items": [{"full_name": "acme/agentkit", "description": "Agents in 50 lines", "html_url": "https://github.com/acme/agentkit",
+                     "stargazers_count": 2300, "created_at": "2026-11-20T00:00:00Z", "pushed_at": "2026-11-22T10:00:00Z",
+                     "language": "Python", "topics": ["agents"]}]}
+    hn = {"hits": [{"objectID": "9", "title": "Rust 2.0 released", "url": "https://r.example", "points": 500,
+                    "num_comments": 10, "created_at_i": int((NOW - timedelta(hours=3)).timestamp())}]}
+    client = _client({"https://api.github.com/search/repositories": gh,
+                      "https://hn.algolia.com/api/v1/search_by_date": hn})
+    cfg.articles.hackernews.enabled = True  # keyword_filter defaults to False: all tech
+    cfg.articles.github.enabled = True
+    res = articles.collect(cfg, since, client=client)
+    titles = {i.title for i in res.items}
+    assert "Rust 2.0 released" in titles
+    repo = next(i for i in res.items if i.source_id == "gh:acme/agentkit")
+    assert repo.meta["stars"] == 2300 and repo.meta["category"] == "github" and res.errors == []

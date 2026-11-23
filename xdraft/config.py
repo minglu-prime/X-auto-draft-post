@@ -42,14 +42,28 @@ class GitConfig(BaseModel):
 class FeedConfig(BaseModel):
     name: str
     url: str
-    # Apply the keyword filter to this feed (turn off for AI-only feeds).
+    # Apply the keyword filter to this feed (turn off for AI-only and trend feeds).
     filter: bool = True
     max_items: int = 30
+    # ai | tech | community | zh | product — shown to the LLM as context for trends.
+    category: str = "ai"
 
 
 class HackerNewsConfig(BaseModel):
     enabled: bool = True
     min_points: int = 100
+    # False = every front-page-level story (broad tech trends); True = AI keywords only.
+    keyword_filter: bool = False
+
+
+class GitHubTrendingConfig(BaseModel):
+    """Fast-rising new repositories via the GitHub search API (no scraping)."""
+
+    enabled: bool = True
+    created_within_days: int = 7
+    min_stars: int = 100
+    max_items: int = 15
+    token_env: str = "GITHUB_TOKEN"  # optional; raises the rate limit
 
 
 class ArticlesConfig(BaseModel):
@@ -57,6 +71,7 @@ class ArticlesConfig(BaseModel):
     keywords: list[str] = Field(default_factory=lambda: list(DEFAULT_KEYWORDS))
     feeds: list[FeedConfig] = Field(default_factory=list)
     hackernews: HackerNewsConfig = Field(default_factory=HackerNewsConfig)
+    github: GitHubTrendingConfig = Field(default_factory=GitHubTrendingConfig)
     fetch_fulltext: bool = False
     fulltext_max_chars: int = 6000
     timeout_seconds: float = 20.0
@@ -82,12 +97,20 @@ class LLMConfig(BaseModel):
 
 
 class DraftConfig(BaseModel):
-    topics_per_run: int = 4
     max_items: int = 60  # newest items sent to topic selection
     item_body_chars: int = 1200
     thread_max_tweets: int = 5
     style_path: str = "style.md"
     duplicate_threshold: float = 0.8  # difflib ratio vs. recent posts
+
+
+class PipelineConfig(BaseModel):
+    suggest_count: int = 8          # topic suggestions per run
+    personal_items: int = 30        # max own items (sessions, notes, commits) sent to the LLM
+    trend_terms: int = 15           # trend signals shown to the LLM
+    optimize_rounds: int = 2        # extra optimize passes while hard checks still fail
+    # Daily automatic collect + suggest while `xdraft serve` runs, local time "HH:MM"; null = off.
+    auto_suggest_at: str | None = "08:30"
 
 
 class PublishConfig(BaseModel):
@@ -100,12 +123,16 @@ class PublishConfig(BaseModel):
     api_base: str = "https://api.x.com"
     authorize_url: str = "https://x.com/i/oauth2/authorize"
     retry_minutes_on_rate_limit: int = 15
+    # Approved posts go into the next free slot (local time, see `timezone`).
+    slots: list[str] = Field(default_factory=lambda: ["09:00", "20:00"])
+    max_per_slot: int = 1
     metrics_every_minutes: int = 120
 
 
 class Config(BaseModel):
     db_path: str = "data/xdraft.db"
     lookback_days: int = 3
+    timezone: str = "Asia/Shanghai"  # IANA name; used for slots and the daily job
     claude_code: ClaudeCodeConfig = Field(default_factory=ClaudeCodeConfig)
     notes: NotesConfig = Field(default_factory=NotesConfig)
     git: GitConfig = Field(default_factory=GitConfig)
@@ -113,6 +140,7 @@ class Config(BaseModel):
     redaction: RedactionConfig = Field(default_factory=RedactionConfig)
     llm: LLMConfig = Field(default_factory=LLMConfig)
     draft: DraftConfig = Field(default_factory=DraftConfig)
+    pipeline: PipelineConfig = Field(default_factory=PipelineConfig)
     publish: PublishConfig = Field(default_factory=PublishConfig)
 
     _base_dir: Path = PrivateAttr(default_factory=Path.cwd)

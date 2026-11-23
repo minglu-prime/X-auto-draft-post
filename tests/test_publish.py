@@ -162,3 +162,17 @@ def test_publish_due_only_publishes_due(cfg, x_env):
 
 def test_rate_limited_error_type():
     assert issubclass(XRateLimited, Exception)
+
+
+def test_slots_respect_timezone_and_capacity(cfg):
+    from datetime import datetime, timezone
+
+    cfg.timezone = "Asia/Shanghai"
+    cfg.publish.slots = ["09:00", "20:00"]
+    after = datetime(2026, 11, 23, 2, 0, tzinfo=timezone.utc)  # 10:00 in Shanghai
+    assert [s.hour for s in service.slot_times(cfg, after, days=1)] == [12, 1, 12]
+    with Session(get_engine(cfg.resolve_path(cfg.db_path))) as s:
+        first = service.next_free_slot(cfg, s, after)
+        assert first == datetime(2026, 11, 23, 12, 0, tzinfo=timezone.utc)
+        service.approve(s, _draft(s, ["a"]), first)
+        assert service.next_free_slot(cfg, s, after) == datetime(2026, 11, 24, 1, 0, tzinfo=timezone.utc)

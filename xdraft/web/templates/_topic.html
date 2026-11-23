@@ -1,0 +1,27 @@
+<article class="topic-card status-{{ t.status }}" data-swap>
+  <header>
+    <h3>{{ t.title }}</h3>
+    <span class="score" title="interest × fit">{{ t.score }}</span>
+    <span class="badge">{{ t.format }}</span>
+  </header>
+  {% if message %}<p class="ok">{{ message }} — <a href="/">open Drafts</a></p>{% endif %}
+  {% if error %}<p class="warn">{{ error }}</p>{% endif %}
+  <dl>
+    <dt>Angle</dt><dd>{{ t.angle }}</dd>
+    <dt>Why now</dt><dd>{{ t.why }}</dd>
+    {% if t.my_connection %}<dt>Your experience</dt><dd>{{ t.my_connection }}</dd>{% endif %}
+  </dl>
+  {% if t.trend_terms %}<ul class="chips small">{% for term in t.trend_terms %}<li>{{ term }}</li>{% endfor %}</ul>{% endif %}
+  <details class="items"><summary>{{ topic_items|length }} sources</summary>
+    <ul>{% for it in topic_items %}
+      <li><span class="src src-{{ it.source }}">{{ (it.meta or {}).get('feed') or it.source }}</span>
+        {% if it.url %}<a href="{{ it.url }}" target="_blank" rel="noopener noreferrer">{{ it.title }}</a>{% else %}{{ it.title }}{% endif %}</li>
+    {% endfor %}</ul>
+  </details>
+  {% if t.status == 'suggested' %}
+  <div class="row actions">
+    <form data-post action="/topics/{{ t.id }}/write"><button class="primary" title="write → polish → optimize, zh + en">Write this</button></form>
+    <form data-post action="/topics/{{ t.id }}/dismiss"><button>Dismiss</button></form>
+  </div>
+  {% endif %}
+</article>
