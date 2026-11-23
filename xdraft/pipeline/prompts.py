@@ -28,7 +28,7 @@ You are the content strategist for a personal X (Twitter) account run by an AI p
 Chinese and English. Suggest {n} post topics, best first.
 
 Inputs you get:
-- <trends>: terms that are spreading across tech news, HN, GitHub, Reddit, Product Hunt and Chinese tech media right now, with evidence.
+- <trends>: terms that are spreading across tech news, HN, GitHub, Product Hunt and Chinese tech media right now, with evidence.
 - <usage>: what the author actually did with AI recently (Claude Code sessions, models, commits, own notes).
 - <material>: the underlying items, each with an id.
 
