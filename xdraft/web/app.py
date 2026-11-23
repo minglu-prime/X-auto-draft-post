@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import re
+from html import escape as html_escape
 from collections.abc import Callable
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
@@ -18,6 +19,7 @@ from sqlalchemy import func
 from sqlmodel import Session, col, select
 
 from xdraft.config import Config
+from xdraft import voice
 from xdraft.db import get_engine
 from xdraft.llm import LLM, LLMError, make_llm
 from xdraft.models import Draft, DraftStatus, Item, Topic, TopicStatus
@@ -198,13 +200,19 @@ def create_app(
         return Response(status_code=204, headers={"X-Redirect": "/topics"})
 
     @app.post("/topics/{topic_id}/write", response_class=HTMLResponse)
-    def write_topic(request: Request, topic_id: int):
+    def write_topic(request: Request, topic_id: int, take: str = Form(""), format: str = Form("")):
         with Session(engine) as s:
             t = s.get(Topic, topic_id)
             if not t:
                 raise HTTPException(404, "topic not found")
             if t.status != TopicStatus.SUGGESTED:
                 return topic_card(request, s, t, error=f"Already {t.status}")
+            if take.strip():
+                t.user_take = take.strip()
+            if format in ("thread", "quick"):
+                t.format = format
+            s.add(t)
+            s.commit()
             try:
                 drafts = produce_drafts(cfg, llm_factory(), s, t)
             except LLMError as e:
@@ -256,7 +264,23 @@ def create_app(
 
     @app.get("/inbox", response_class=HTMLResponse)
     def inbox(request: Request):
-        return templates.TemplateResponse(request, "inbox.html", {"x": x_status()})
+        return templates.TemplateResponse(request, "inbox.html", {"x": x_status(), "voice": voice.summary(cfg)})
+
+    @app.post("/voice", response_class=HTMLResponse)
+    def add_voice(kind: str = Form("mine"), text: str = Form(""), url: str = Form("")):
+        kind = "reference" if kind == "reference" else "mine"
+        try:
+            if url.strip():
+                path = voice.save_url(cfg, url.strip())
+            elif text.strip():
+                path = voice.save_text(cfg, kind, text)
+            else:
+                return HTMLResponse("<p class='warn'>Paste some text or a link.</p>")
+        except Exception as e:  # noqa: BLE001 - shown to the user
+            return HTMLResponse(f"<p class='warn'>Could not save: {html_escape(str(e))}</p>")
+        info = voice.summary(cfg)
+        return HTMLResponse(f"<p class='ok'>Saved {html_escape(path.name)}. Now {info['own']} pieces of your writing, "
+                            f"{info['references']} reference excerpts.</p>")
 
     # ---- draft actions -----------------------------------------------------------
     @app.post("/drafts/{draft_id}/save", response_class=HTMLResponse)

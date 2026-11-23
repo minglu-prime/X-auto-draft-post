@@ -26,7 +26,7 @@ class TopicSuggestion(BaseModel):
     angle: str = Field(description="The specific take or hook the post will make")
     why_now: str = Field(description="The trend evidence: what is happening right now that makes this timely")
     my_connection: str = Field(description="The author's own usage/experience that relates to it; empty if none")
-    format: Literal["single", "thread"] = Field(description="single tweet or a short thread")
+    format: Literal["thread", "quick"] = Field(default="thread", description="thread (3-8 tweets, default) or quick (one tweet)")
     score: int = Field(ge=0, le=100, description="Expected interest x fit with the author's voice")
     item_ids: list[int] = Field(description="ids of the material items supporting this topic")
     trend_terms: list[str] = Field(default_factory=list, description="Trend signals this topic rides on")

@@ -7,9 +7,11 @@ class FakeLLM:
     def __init__(self, *replies):
         self.replies = list(replies)
         self.calls: list[tuple[str, str, type]] = []
+        self.temperatures: list[float | None] = []
 
-    def parse(self, system, user, schema):
+    def parse(self, system, user, schema, temperature=None):
         self.calls.append((system, user, schema))
+        self.temperatures.append(temperature)
         if not self.replies:
             raise AssertionError(f"unexpected LLM call for {schema.__name__}")
         reply = self.replies.pop(0)

@@ -10,6 +10,7 @@
     <dt>Angle</dt><dd>{{ t.angle }}</dd>
     <dt>Why now</dt><dd>{{ t.why }}</dd>
     {% if t.my_connection %}<dt>Your experience</dt><dd>{{ t.my_connection }}</dd>{% endif %}
+    {% if t.user_take and t.status != 'suggested' %}<dt>Your take</dt><dd>{{ t.user_take }}</dd>{% endif %}
   </dl>
   {% if t.trend_terms %}<ul class="chips small">{% for term in t.trend_terms %}<li>{{ term }}</li>{% endfor %}</ul>{% endif %}
   <details class="items"><summary>{{ topic_items|length }} sources</summary>
@@ -19,9 +20,16 @@
     {% endfor %}</ul>
   </details>
   {% if t.status == 'suggested' %}
-  <div class="row actions">
-    <form data-post action="/topics/{{ t.id }}/write"><button class="primary" title="write → polish → optimize, zh + en">Write this</button></form>
-    <form data-post action="/topics/{{ t.id }}/dismiss"><button>Dismiss</button></form>
-  </div>
+  <form data-post action="/topics/{{ t.id }}/write" class="take">
+    <textarea name="take" rows="3" placeholder="Your take (optional, but the best way to avoid AI-sounding posts): what do YOU think about this? A few rough sentences are enough.">{{ t.user_take or '' }}</textarea>
+    <div class="row actions">
+      <select name="format" title="thread = 3–8 tweets">
+        <option value="thread" {% if t.format != 'quick' %}selected{% endif %}>Thread</option>
+        <option value="quick" {% if t.format == 'quick' %}selected{% endif %}>Single tweet</option>
+      </select>
+      <button class="primary" title="write → polish → fix, zh + en">Write this</button>
+    </div>
+  </form>
+  <form data-post action="/topics/{{ t.id }}/dismiss"><button>Dismiss</button></form>
   {% endif %}
 </article>

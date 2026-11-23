@@ -13,7 +13,11 @@ import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
+import httpx
+from sqlalchemy.orm.attributes import flag_modified
 from sqlmodel import Session, col, select
+
+from xdraft import voice
 
 from xdraft.config import Config
 from xdraft.llm import LLM, LLMError
@@ -40,7 +44,8 @@ LANG_NAMES = {"zh": "Chinese (简体中文)", "en": "English"}
 def load_style(cfg: Config) -> str:
     path = cfg.resolve_path(cfg.draft.style_path)
     if path.is_file():
-        text = path.read_text(encoding="utf-8").strip()
+        text = path.read_text(encoding="utf-8")
+        text = "\n".join(line for line in text.splitlines() if not line.strip().startswith("<!--")).strip()
         if text:
             return text
     return prompts.DEFAULT_STYLE
@@ -97,10 +102,14 @@ def material_for(items: list[Item]) -> tuple[str, list[str]]:
 
 def run_checks(cfg: Config, session: Session, draft: Draft, items: list[Item]) -> list[str]:
     text, urls = material_for(items)
+    topic = session.get(Topic, draft.topic_id) if draft.topic_id else None
+    if topic:  # the author's own experience and take are valid sources too
+        text += f"\n{topic.angle}\n{topic.why}\n{topic.my_connection}\n{topic.user_take}"
     recent = [d.text for d in recent_posts(session) if d.id is None or d.id != draft.id]
     return check_post(
         draft.tweets, draft.source_urls, text, urls, recent,
         thread_max=cfg.draft.thread_max_tweets, duplicate_threshold=cfg.draft.duplicate_threshold,
+        lang=draft.lang,
     )
 
 
@@ -168,53 +177,121 @@ def _post_json(versions: dict[str, PostVersion]) -> str:
 
 
 def _topic_brief(topic: Topic) -> str:
-    return (f"Topic: {topic.title}\nAngle: {topic.angle}\nWhy now: {topic.why}\n"
-            f"Author's own experience: {topic.my_connection or '(none)'}\nFormat: {topic.format}\n")
+    brief = (f"Topic: {topic.title}\nAngle: {topic.angle}\nWhy now: {topic.why}\n"
+             f"Author's own experience: {topic.my_connection or '(none)'}\n")
+    if (topic.user_take or "").strip():
+        brief += f"Author's own take (the backbone of the post; argue exactly this): {topic.user_take.strip()}\n"
+    return brief
 
 
-def write_drafts(llm: LLM, cfg: Config, topic: Topic, items: list[Item], style: str) -> BilingualDraft:
-    system = prompts.DRAFT_SYSTEM.format(style=style, thread_max=cfg.draft.thread_max_tweets)
-    return llm.parse(system, _topic_brief(topic) + "\n" + prompts.format_items(items, cfg.draft.item_body_chars),
-                     BilingualDraft)
+def _format_rule(cfg: Config, topic: Topic) -> str:
+    if (topic.format or "thread") in ("quick", "single"):
+        return prompts.QUICK_RULE
+    return prompts.THREAD_RULE.format(min=cfg.draft.thread_min_tweets, max=cfg.draft.thread_max_tweets)
+
+
+def voice_for(cfg: Config, topic_text: str) -> str:
+    """The author's real writing (both languages) plus a few excerpts from writers they like."""
+    own_all, refs_all = voice.load_own(cfg), voice.load_references(cfg)
+    n = cfg.voice.own_examples
+    own = voice.pick_examples(own_all, topic_text, "zh", n - n // 2)
+    own += [s for s in voice.pick_examples(own_all, topic_text, "en", n // 2) if s not in own]
+    refs = voice.pick_examples(refs_all, topic_text, "zh", cfg.voice.reference_excerpts)
+    blocks = [b for b in (voice.format_own(own), voice.format_references(refs)) if b]
+    return "\n\n".join(blocks) or "(No examples of the author's writing yet: follow the style notes closely.)"
+
+
+def _material(cfg: Config, items: list[Item]) -> str:
+    return prompts.format_items(items, cfg.draft.item_body_chars, cfg.draft.fulltext_chars)
+
+
+def write_drafts(llm: LLM, cfg: Config, topic: Topic, items: list[Item], style: str, voice_text: str) -> BilingualDraft:
+    system = prompts.DRAFT_SYSTEM.format(voice=voice_text, style=style, format_rule=_format_rule(cfg, topic),
+                                         tells=prompts.AI_TELLS)
+    return llm.parse(system, _topic_brief(topic) + "\n" + _material(cfg, items), BilingualDraft,
+                     temperature=cfg.llm.temperature_write)
 
 
 def polish_drafts(llm: LLM, cfg: Config, topic: Topic, versions: dict[str, PostVersion], items: list[Item],
-                  style: str) -> BilingualDraft:
-    system = prompts.POLISH_SYSTEM.format(style=style, thread_max=cfg.draft.thread_max_tweets)
-    user = (_topic_brief(topic) + "\n<draft>\n" + _post_json(versions) + "\n</draft>\n\n"
-            + prompts.format_items(items, cfg.draft.item_body_chars))
-    return llm.parse(system, user, BilingualDraft)
+                  style: str, voice_text: str) -> OptimizedDraft:
+    system = prompts.POLISH_SYSTEM.format(voice=voice_text, style=style, min=cfg.draft.thread_min_tweets,
+                                          tells=prompts.AI_TELLS)
+    user = _topic_brief(topic) + "\n<draft>\n" + _post_json(versions) + "\n</draft>\n\n" + _material(cfg, items)
+    return llm.parse(system, user, OptimizedDraft, temperature=cfg.llm.temperature_edit)
 
 
 def optimize_drafts(llm: LLM, cfg: Config, topic: Topic, versions: dict[str, PostVersion],
-                    warnings: dict[str, list[str]], items: list[Item], style: str) -> OptimizedDraft:
-    system = prompts.OPTIMIZE_SYSTEM.format(style=style, thread_max=cfg.draft.thread_max_tweets)
+                    warnings: dict[str, list[str]], items: list[Item], style: str, voice_text: str) -> OptimizedDraft:
+    """Fix-only pass: runs only when deterministic checks found concrete problems."""
+    system = prompts.OPTIMIZE_SYSTEM.format(voice=voice_text, max=cfg.draft.thread_max_tweets, tells=prompts.AI_TELLS)
     checks = "\n".join(f"{lang}: " + ("; ".join(ws) if ws else "no problems") for lang, ws in warnings.items())
-    user = (_topic_brief(topic) + "\n<draft>\n" + _post_json(versions) + "\n</draft>\n\n<checks>\n" + checks
-            + "\n</checks>\n\n" + prompts.format_items(items, cfg.draft.item_body_chars))
-    return llm.parse(system, user, OptimizedDraft)
+    user = ("<draft>\n" + _post_json(versions) + "\n</draft>\n\n<checks>\n" + checks + "\n</checks>\n\n"
+            + _material(cfg, items))
+    return llm.parse(system, user, OptimizedDraft, temperature=cfg.llm.temperature_edit)
 
 
-def produce_drafts(cfg: Config, llm: LLM, session: Session, topic: Topic) -> list[Draft]:
-    """Run the full writing chain for one picked topic and save a zh and an en draft."""
+def fetch_fulltext(cfg: Config, session: Session, items: list[Item], client: httpx.Client | None = None) -> None:
+    """Full article text for the items of a picked topic (only these, only once)."""
+    if not cfg.articles.fetch_fulltext:
+        return
+    todo = [it for it in items if it.source == "articles" and it.url and not (it.meta or {}).get("fulltext")]
+    if not todo:
+        return
+    from xdraft.collectors.articles import USER_AGENT, _add_fulltext
+
+    own = client is None
+    client = client or httpx.Client(timeout=cfg.articles.timeout_seconds, follow_redirects=True,
+                                    headers={"User-Agent": USER_AGENT})
+    errors: list[str] = []
+    try:
+        for it in todo:
+            it.meta = dict(it.meta or {})
+        _add_fulltext(client, todo, cfg.articles.fulltext_max_chars, errors)
+    finally:
+        if own:
+            client.close()
+    for it in todo:
+        flag_modified(it, "meta")
+        session.add(it)
+    session.commit()
+    for e in errors:
+        log.info("full text: %s", e)
+
+
+def _needs_fix(warnings: dict[str, list[str]], first_round: bool) -> bool:
+    """Round 1 fixes anything flagged; later rounds only length / thread problems and AI tells."""
+    flagged = [w for ws in warnings.values() for w in ws]
+    if first_round:
+        return bool(flagged)
+    return any(is_hard_warning(w) or w.startswith("AI-ish") for w in flagged)
+
+
+def produce_drafts(cfg: Config, llm: LLM, session: Session, topic: Topic, http_client: httpx.Client | None = None) -> list[Draft]:
+    """Write (with the author's real writing as examples) → de-AI polish → fix only what checks flag."""
     items = items_for_topic(session, topic)
+    fetch_fulltext(cfg, session, items, http_client)
     style = load_style(cfg)
+    voice_text = voice_for(cfg, f"{topic.title} {topic.angle} {topic.user_take} {topic.my_connection}")
     now = utcnow()
-    written = write_drafts(llm, cfg, topic, items, style)
+    written = write_drafts(llm, cfg, topic, items, style, voice_text)
     versions: dict[str, PostVersion] = {lang: getattr(written, lang) for lang in LANGS}
     revisions = {lang: [{"stage": "written", "tweets": versions[lang].tweets}] for lang in LANGS}
-    stage, notes, alt_hooks, stage_errors = "written", {}, {lang: [] for lang in LANGS}, []
+    stage, alt_hooks, stage_errors = "written", {lang: [] for lang in LANGS}, []
 
     def checks_for(vs: dict[str, PostVersion]) -> dict[str, list[str]]:
-        return {lang: run_checks(cfg, session, Draft(lang=lang, tweets=v.tweets, source_urls=v.source_urls,
-                                                     created_at=now, updated_at=now), items)
+        return {lang: run_checks(cfg, session, Draft(topic_id=topic.id, lang=lang, tweets=v.tweets,
+                                                     source_urls=v.source_urls, created_at=now, updated_at=now), items)
                 for lang, v in vs.items()}
 
-    try:
-        polished = polish_drafts(llm, cfg, topic, versions, items, style)
-        versions = {lang: getattr(polished, lang) for lang in LANGS}
+    def apply(result: OptimizedDraft, stage_name: str) -> None:
         for lang in LANGS:
-            revisions[lang].append({"stage": "polished", "tweets": versions[lang].tweets})
+            ov = getattr(result, lang)
+            versions[lang] = PostVersion(tweets=ov.tweets, source_urls=ov.source_urls or versions[lang].source_urls)
+            alt_hooks[lang] = ov.alt_hooks[:3] or alt_hooks[lang]
+            revisions[lang].append({"stage": stage_name, "tweets": ov.tweets, "notes": ov.notes})
+
+    try:
+        apply(polish_drafts(llm, cfg, topic, versions, items, style, voice_text), "polished")
         stage = "polished"
     except LLMError as e:
         stage_errors.append(f"Polish step failed: {e}")
@@ -222,19 +299,14 @@ def produce_drafts(cfg: Config, llm: LLM, session: Session, topic: Topic) -> lis
     if stage == "polished":
         for round_no in range(1 + max(0, cfg.pipeline.optimize_rounds)):
             warnings = checks_for(versions)
-            if round_no > 0 and not any(is_hard_warning(w) for ws in warnings.values() for w in ws):
+            if not _needs_fix(warnings, round_no == 0):
+                stage = "optimized"  # checks are clean: nothing to fix
                 break
             try:
-                optimized = optimize_drafts(llm, cfg, topic, versions, warnings, items, style)
+                apply(optimize_drafts(llm, cfg, topic, versions, warnings, items, style, voice_text), "optimized")
             except LLMError as e:
                 stage_errors.append(f"Optimize step failed: {e}")
                 break
-            for lang in LANGS:
-                ov = getattr(optimized, lang)
-                versions[lang] = PostVersion(tweets=ov.tweets, source_urls=ov.source_urls)
-                alt_hooks[lang] = ov.alt_hooks[:3] or alt_hooks[lang]
-                notes[lang] = ov.notes
-                revisions[lang].append({"stage": "optimized", "tweets": ov.tweets, "notes": ov.notes})
             stage = "optimized"
 
     drafts = []
@@ -256,12 +328,13 @@ def produce_drafts(cfg: Config, llm: LLM, session: Session, topic: Topic) -> lis
 
 def rewrite_post(llm: LLM, cfg: Config, draft: Draft, items: list[Item], instruction: str, style: str) -> PostVersion:
     system = prompts.REWRITE_SYSTEM.format(
-        lang_name=LANG_NAMES.get(draft.lang, draft.lang), style=style, thread_max=cfg.draft.thread_max_tweets
+        lang_name=LANG_NAMES.get(draft.lang, draft.lang), style=style, thread_max=cfg.draft.thread_max_tweets,
+        voice=voice_for(cfg, " ".join(draft.tweets)), tells=prompts.AI_TELLS,
     )
     current = "\n---\n".join(draft.tweets)
     user = (
         f"Instruction: {instruction}\n\nCurrent post (tweets separated by ---):\n{current}\n\n"
         f"Current source URLs: {', '.join(draft.source_urls) or '(none)'}\n\n"
-        + prompts.format_items(items, cfg.draft.item_body_chars)
+        + _material(cfg, items)
     )
-    return llm.parse(system, user, PostVersion)
+    return llm.parse(system, user, PostVersion, temperature=cfg.llm.temperature_edit)

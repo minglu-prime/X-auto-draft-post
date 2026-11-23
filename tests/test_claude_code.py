@@ -22,6 +22,7 @@ def test_session_summary(cfg, since):
     assert "alice" not in item.body
     assert "subagent prompt" not in item.body
     assert item.title.startswith("Refactor the parser")
+    assert "Last assistant reply (what got done): Sure" in item.body
 
 
 def test_filters_old_and_excluded_projects(cfg, since):

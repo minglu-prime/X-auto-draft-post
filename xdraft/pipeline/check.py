@@ -30,6 +30,47 @@ def weighted_length(text: str) -> int:
     return total + sum(_char_weight(c) for c in text[pos:])
 
 
+_AI_EN = [
+    r"\b(?:isn't|is not|wasn't|aren't|it's not)\b[^.!?\n]{1,60}?(?:—|–|--|;|,)\s*(?:it's|it is|they're|that's|it was)\b",
+    r"\bnot just\b[^.!?\n]{1,60}?\bbut\b",
+    r"\bhere'?s the (?:thing|kicker|catch|truth)\b",
+    r"\bgame[- ]?changer\b", r"\bdelv(?:e|es|ing)\b", r"\bunlock(?:s|ed|ing)?\b", r"\bin today'?s\b",
+    r"\blet'?s dive\b", r"\bdive (?:in|into|deep)\b", r"\brevolutioni[sz]\w*", r"\bseamless(?:ly)?\b",
+    r"\bleverag(?:e|es|ed|ing)\b", r"\ba testament to\b", r"\bever[- ]evolving\b", r"\bthe \w+ landscape\b",
+    r"🚀", r"🧵", r"(?m)^\s*\d+/\d*\s",
+]
+_AI_EN_END = r"(?:what do you think|thoughts|agree|what about you)\s*\?\s*$"
+_AI_ZH = [
+    r"不是[^。！？\n]{1,30}?[，,、]?\s*而是", r"值得注意的是", r"总的来说", r"总而言之", r"让我们", r"赋能", r"颠覆",
+    r"重磅", r"干货", r"一文读懂", r"炸裂", r"划重点", r"首先[\s\S]{0,200}?其次", r"！！",
+]
+_AI_ZH_END = r"(?:你怎么看|你们怎么看|你们觉得呢|你觉得呢|欢迎评论|欢迎留言|评论区聊聊)[？?！!。]?\s*$"
+
+
+def ai_patterns(text: str, lang: str | None = None) -> list[str]:
+    """Phrases that make a post read machine-written. Returns warnings like `AI-ish: "…"`."""
+    hits: list[str] = []
+    check_en = lang in (None, "en")
+    check_zh = lang in (None, "zh")
+    patterns = (_AI_EN if check_en else []) + (_AI_ZH if check_zh else [])
+    flags = re.I
+    for pat in patterns:
+        for m in re.finditer(pat, text, flags):
+            hits.append(m.group().strip())
+    ends = ([_AI_EN_END] if check_en else []) + ([_AI_ZH_END] if check_zh else [])
+    for pat in ends:
+        m = re.search(pat, text.strip(), re.I)
+        if m:
+            hits.append(m.group().strip() + " (question ending)")
+    if check_en and text.count("—") > 1:
+        hits.append(f"{text.count('—')} em dashes")
+    out = []
+    for h in dict.fromkeys(hits):
+        snippet = " ".join(h.split())
+        out.append(f'AI-ish: "{snippet[:40]}{"…" if len(snippet) > 40 else ""}"')
+    return out
+
+
 def _norm_num(s: str) -> str:
     return re.sub(r"[\s,%x×kKMB]", "", s)
 
@@ -42,6 +83,7 @@ def check_post(
     recent_texts: Iterable[str],
     thread_max: int = 5,
     duplicate_threshold: float = 0.8,
+    lang: str | None = None,
 ) -> list[str]:
     warnings: list[str] = []
     if not tweets or not any(t.strip() for t in tweets):
@@ -74,4 +116,5 @@ def check_post(
 
     if redact(text) != text:
         warnings.append("Possible secret, email or personal path in the text")
+    warnings += ai_patterns(text, lang)
     return warnings

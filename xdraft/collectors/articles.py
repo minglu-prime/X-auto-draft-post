@@ -151,7 +151,7 @@ def _add_fulltext(client: httpx.Client, items: list[CollectedItem], max_chars: i
     try:
         import trafilatura
     except ImportError:
-        errors.append("fetch_fulltext is on but trafilatura is not installed (pip install 'xdraft[fulltext]')")
+        errors.append("trafilatura is not installed; run: uv sync")
         return
     for item in items:
         if not item.url:
@@ -192,8 +192,6 @@ def collect(cfg: Config, since: datetime, client: httpx.Client | None = None) ->
                 result.items += collect_github(client, ac.github)
             except Exception as e:  # noqa: BLE001
                 result.errors.append(f"github: {e}")
-        if ac.fetch_fulltext:
-            _add_fulltext(client, result.items, ac.fulltext_max_chars, result.errors)
     finally:
         if own_client:
             client.close()
