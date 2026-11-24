@@ -113,13 +113,18 @@ Then open http://127.0.0.1:8000 in your browser. Stop the dashboard with `Ctrl+C
 
 In the dashboard:
 
-The workbench (工作台) is one page with four steps: collect → pick topics → review → scheduled. The step bar highlights what to do next.
+The workbench (工作台) is one page with four steps: collect → pick topics → review → publish. The step bar highlights what to do next.
 
-1. **Topics (待选题)**: click **生成选题** (or wait for the daily run), write your own take on the ones you like, then **写这篇**. Trending terms and your AI usage are in the collapsed panel below.
-2. **Review (待审稿)**: each picked topic has a Chinese and an English card that went through write → polish → optimize. Edit inline (a line of `---` separates thread tweets) and attach images to any tweet: up to 4 per tweet, PNG/JPG/GIF/WEBP, 5 MB each. Then **批准** (next free slot) or **驳回**. Posting now, a custom time, AI rewrites, alternative openings and earlier versions are under **更多操作**.
-3. **笔记与文风** saves quick notes (the strongest signal for topic choice) and writing samples. **已发布** shows what was posted, with likes, reposts, replies and views.
+1. **Topics (待选题)**: click **找选题** (or wait for the daily run). If the material is more than 2 hours old, it is collected again first. Write your own take on the ones you like, then **生成中英草稿**. The best 6 are shown; the rest are folded below them.
+2. **Review (待审稿)**: each picked topic has a Chinese and an English card. Every tweet has its own box. Edits save by themselves. Paste or drag a screenshot into a box to attach it to that tweet: up to 4 per tweet, PNG/JPG/GIF/WEBP, 5 MB each. Then **排到 …** (next free slot) or **跳过这篇**. Both can be undone from the message that appears. Posting now, a custom time (read in `timezone`), AI rewrites, alternative openings and earlier versions are under **改写与版本**.
+3. **该发了**: see *Posting by hand* below.
+4. **笔记与文风** saves quick notes (the strongest signal for topic choice) and writing samples. **已发布** shows what was posted, with likes, reposts, replies and views when X is connected. Skipped drafts are folded at the bottom and can be put back.
 
 Images are stored in `data\media\<draft id>\` and uploaded to X when the tweet is posted.
+
+### Posting by hand
+
+Unless posting is enabled **and** X is connected, xdraft never posts for you. When an approved draft's slot comes, it moves to **该发了** at the top of the workbench, and the tab title shows the count. Each tweet there has a **复制** button and its images can be downloaded. Post them on X in order: reply to the previous tweet to make a thread. Then click **我已发出**, optionally pasting the first tweet's link. The draft is then listed under **已发布**.
 
 The same flow from the terminal, one command at a time:
 
@@ -160,12 +165,12 @@ Task times use your PC's clock, so keep `timezone` in `config.yaml` the same as 
 
 ## Posting to X
 
-Publishing is **off by default**. Approving a draft then only writes it to `data\publish.log` and marks it *dry run*.
+Automatic posting is **off by default**: approved drafts become **该发了** at their slot and you post them by hand (see above).
 
 1. Create an app at developer.x.com with OAuth 2.0 enabled, type *Web App / native*, permissions **Read and write**, and callback URL `http://127.0.0.1:8000/x/callback`. Check X's current API plan and pricing for posting limits.
 2. Put `X_CLIENT_ID` (and `X_CLIENT_SECRET` for a confidential client) in `.env`.
 3. Run `uv run xdraft serve`, click **Connect X**, and authorize. xdraft asks for the `media.write` scope so it can upload images; if you connected before image support, disconnect and connect again. The token is stored in `data\x_token.json` inside your project folder (readable only by you on macOS/Linux) and refreshed automatically.
-4. Set `publish.enabled: true` in `config.yaml` and restart the dashboard. The header shows **LIVE posting**.
+4. Set `publish.enabled: true` in `config.yaml` and restart the dashboard. The header shows **自动发布**. If X gets disconnected later, drafts fall back to posting by hand instead of failing.
 
 Approved drafts go into the next free slot from `publish.slots` (in `timezone`, at most `max_per_slot` per slot), and are published within a minute of their slot while the dashboard runs, or within 5 minutes by the scheduled task. Threads are posted as replies; if one fails half-way, approving it again resumes where it stopped instead of posting duplicates. On a rate limit (429) the post is rescheduled automatically.
 

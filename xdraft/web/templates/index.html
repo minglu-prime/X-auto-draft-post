@@ -1,59 +1,79 @@
 {% extends "base.html" %}
 {% block content %}
+{% set auto = x['auto'] %}
 {% set steps = [
   ("collect", "收集素材", n_items ~ " 条素材", "/sources"),
   ("pick", "选题", topics|length ~ " 个待选", "#topics"),
   ("review", "审稿", n_review ~ " 篇待审", "#drafts"),
-  ("publish", "排期发布", scheduled|length ~ " 篇已排期", "#scheduled"),
+  ("publish", "发布", (due|length ~ " 篇该发了") if due else (scheduled|length ~ " 篇已排期"), "#due" if due else "#scheduled"),
 ] %}
 <ol class="steps" data-current="{{ step }}">
   {% for key, label, count, href in steps %}
-  <li class="{{ 'now' if key == step else '' }}"><a href="{{ href }}">
+  <li class="{{ 'now' if key == step else '' }}"><a href="{{ href }}"{% if key == step %} aria-current="step"{% endif %}>
     <span class="num">{{ '%02d' % loop.index }}</span><span class="label">{{ label }}</span><span class="count">{{ count }}</span>
   </a></li>
   {% endfor %}
 </ol>
 
+{% set busy_suggest = "找选题中，素材旧了会先补一遍，通常 30–90 秒" %}
 <form id="run" data-post action="/collect" data-target="#run-result" class="next">
   <input type="hidden" name="back" value="/">
-  {% if step == 'collect' %}
-    <p>第一步：从 Claude Code 记录、笔记、git 提交和技术新闻里收集素材。</p>
-    <button class="primary big" formaction="/collect" data-busy="正在收集素材">收集素材</button>
+  {% if due %}
+    <p>有 {{ due|length }} 篇到点了，等你发到 X。</p>
+    <a class="button primary big" href="#due">去发</a>
+  {% elif step == 'collect' %}
+    <p>先从 Claude Code 记录、笔记、git 提交和技术新闻里收集素材。</p>
+    <button class="primary big" formaction="/collect" data-busy="收集素材中">收集素材</button>
   {% elif step == 'pick' and topics %}
-    <p>有 {{ topics|length }} 个选题等你挑。写下你的观点，点「写这篇」。</p>
-    <a class="button primary big" href="#topics">去挑选题 ↓</a>
+    <p>有 {{ topics|length }} 个选题。挑一个，写一句你的看法，生成草稿。</p>
+    <a class="button primary big" href="#topics">看选题</a>
   {% elif step == 'pick' %}
-    <p>素材有了（{{ n_items }} 条），让 AI 从里面找值得写的选题。</p>
-    <button class="primary big" formaction="/suggest" data-busy="AI 正在找选题，通常 30–90 秒">生成选题</button>
+    <p>让 AI 从最近的素材里找值得写的选题。</p>
+    <button class="primary big" formaction="/suggest" data-busy="{{ busy_suggest }}">找选题</button>
   {% elif step == 'review' %}
-    <p>有 {{ n_review }} 篇草稿等你审。改好后点「批准」，会排到下一个空闲时段（{{ next_slot_label() or '暂无空闲时段' }}）。</p>
-    <a class="button primary big" href="#drafts">去审稿 ↓</a>
+    <p>有 {{ n_review }} 篇草稿待审。改完点「排到…」，会进下一个空闲时段（{{ next_slot_label() or '暂无' }}）。</p>
+    <a class="button primary big" href="#drafts">去审稿</a>
   {% else %}
-    <p>{{ scheduled|length }} 篇已排期，到点自动发布（需要保持本页面的服务在运行）。想再写点？</p>
-    <button class="primary big" formaction="/suggest" data-busy="AI 正在找选题，通常 30–90 秒">生成新选题</button>
+    <p>{{ scheduled|length }} 篇已排期，{{ '到点自动发到 X，需要保持 xdraft 在运行' if auto else '到点会在这里提醒你发' }}。</p>
+    <button class="primary big" formaction="/suggest" data-busy="{{ busy_suggest }}">找新选题</button>
   {% endif %}
   <details class="settings">
     <summary>参数与其它操作</summary>
     <div class="row">
       <label>回看天数 <input type="number" name="days" min="1" max="60" value="{{ cfg.lookback_days }}"></label>
       <label>选题数量 <input type="number" name="count" min="1" max="15" value="{{ cfg.pipeline.suggest_count }}"></label>
-      <button formaction="/collect" data-busy="正在收集素材">收集素材</button>
-      <button formaction="/suggest" data-busy="AI 正在找选题，通常 30–90 秒">生成选题</button>
+      <button formaction="/collect" data-busy="收集素材中">收集素材</button>
+      <button formaction="/suggest" data-busy="{{ busy_suggest }}">找选题</button>
     </div>
-    {% if cfg.pipeline.auto_suggest_at %}<p class="muted">服务运行时，每天 {{ cfg.pipeline.auto_suggest_at }}（{{ cfg.timezone }}）会自动收集并生成选题。</p>{% endif %}
+    {% if cfg.pipeline.auto_suggest_at %}<p class="muted small">xdraft 运行时，每天 {{ cfg.pipeline.auto_suggest_at }}（{{ cfg.timezone }}）会自动收集并找选题。</p>{% endif %}
   </details>
 </form>
-<div id="run-result" class="result"></div>
+<div id="run-result" class="result" role="status"></div>
 
 <div class="flow">
+{% if due %}
+<section id="due" class="block first">
+  <h2>该发了 <span class="muted">{{ due|length }}</span></h2>
+  <div class="pair">{% for d in due %}{% include "_draft.html" %}{% endfor %}</div>
+</section>
+{% endif %}
+
 <section id="topics" class="block">
   <h2>待选题 <span class="muted">{{ topics|length }}</span></h2>
   {% if topics %}
   <div class="topics">
-  {% for t in topics %}{% set topic_items = items_by_topic[t.id] %}{% include "_topic.html" %}{% endfor %}
+  {% for t in topics[:6] %}{% set topic_items = items_by_topic[t.id] %}{% include "_topic.html" %}{% endfor %}
   </div>
+  {% if topics|length > 6 %}
+  <details class="more-topics">
+    <summary>另外 {{ topics|length - 6 }} 个（推荐度更低）</summary>
+    <div class="topics">
+    {% for t in topics[6:] %}{% set topic_items = items_by_topic[t.id] %}{% include "_topic.html" %}{% endfor %}
+    </div>
+  </details>
+  {% endif %}
   {% else %}
-  <p class="empty">还没有选题。{% if n_items %}<button form="run" formaction="/suggest" class="primary" data-busy="AI 正在找选题，通常 30–90 秒">生成选题</button>{% else %}先收集素材。{% endif %}</p>
+  <p class="empty">没有待选题。<button form="run" formaction="/suggest" class="primary" data-busy="{{ busy_suggest }}">找选题</button></p>
   {% endif %}
   <details class="signals-box">
     <summary>热点词与你的 AI 使用情况（{{ snap.n_items }} 条素材，最近 {{ cfg.lookback_days }} 天）</summary>
@@ -62,9 +82,9 @@
         <h3>正在热议</h3>
         {% if snap.terms %}
         <ul class="chips">{% for t in snap.terms %}
-          <li title="{{ t.examples|join(' | ') }}"><b>{{ t.term }}</b> <span class="muted">{{ t.items }} 条 · {{ t.feeds|length }} 个来源{% if t.points %} · 🔥{{ t.points }}{% endif %}</span></li>
+          <li title="{{ t.examples|join(' | ') }}"><b>{{ t.term }}</b> <span class="muted">{{ t.items }} 条 · {{ t.feeds|length }} 个来源{% if t.points %} · 热度 {{ t.points }}{% endif %}</span></li>
         {% endfor %}</ul>
-        {% else %}<p class="muted">还看不出明显热点，多收集一些素材。</p>{% endif %}
+        {% else %}<p class="muted">还看不出明显热点。</p>{% endif %}
       </div>
       <div class="panel">
         <h3>你的 AI 使用情况</h3>
@@ -74,16 +94,17 @@
   </details>
 </section>
 
-<section id="drafts" class="block{{ ' first' if step == 'review' else '' }}">
+<section id="drafts" class="block{{ ' first' if step == 'review' and not due else '' }}">
   <h2>待审稿 <span class="muted">{{ n_review }}</span></h2>
   {% if not review_groups %}
-  <p class="empty">没有待审的草稿。{% if topics %}在上面挑一个选题，点「写这篇」。{% endif %}</p>
+  <p class="empty">没有待审稿。{% if topics %}挑一个选题，点「生成中英草稿」。{% endif %}</p>
   {% endif %}
   {% for g in review_groups %}
   <section class="topic">
     {% if g.topic %}
-    <h3>{{ g.topic.title }} <span class="score" title="兴趣分">{{ g.topic.score }}</span></h3>
+    <h3>{{ g.topic.title }}</h3>
     <p class="angle">{{ g.topic.angle }}</p>
+    {% if g["items"] %}
     <details class="items"><summary class="muted">{{ g["items"]|length }} 条来源素材</summary>
       <ul>{% for it in g["items"] %}
         <li><span class="src src-{{ it.source }}">{{ it.source }}</span>
@@ -92,6 +113,7 @@
       {% endfor %}</ul>
     </details>
     {% endif %}
+    {% endif %}
     <div class="pair">
       {% for d in g.drafts %}{% include "_draft.html" %}{% endfor %}
     </div>
@@ -99,11 +121,12 @@
   {% endfor %}
 </section>
 
+{% if scheduled %}
 <section id="scheduled" class="block">
   <h2>已排期 <span class="muted">{{ scheduled|length }}</span></h2>
-  {% if scheduled %}
+  <p class="muted small">{{ '到点自动发到 X。' if auto else '到点会移到「该发了」，提醒你手动发。' }}改正文会自动保存，排期不变。</p>
   <div class="pair">{% for d in scheduled %}{% include "_draft.html" %}{% endfor %}</div>
-  {% else %}<p class="empty">还没有排期的帖子。批准草稿后会出现在这里。</p>{% endif %}
 </section>
+{% endif %}
 </div>
 {% endblock %}

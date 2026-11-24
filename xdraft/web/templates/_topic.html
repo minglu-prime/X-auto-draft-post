@@ -1,11 +1,10 @@
-<article class="topic-card status-{{ t.status }}" data-swap>
+<article class="topic-card status-{{ t.status }}" id="topic-{{ t.id }}" data-swap>
   <header>
     <h3>{{ t.title }}</h3>
-    <span class="score" title="兴趣 × 匹配度">{{ t.score }}</span>
-    <span class="badge">{{ '串推' if t.format == 'thread' else '单条' }}</span>
+    <span class="score" title="和你的经历、当下热度的匹配程度，越高越值得写">推荐 {{ t.score }}</span>
   </header>
-  {% if message %}<p class="ok">{{ message }}</p>{% endif %}
-  {% if error %}<p class="warn">{{ error }}</p>{% endif %}
+  {% if message %}<p class="ok" hidden data-toast>{{ message }}</p>{% endif %}
+  {% if error %}<p class="warn" role="alert">{{ error }}</p>{% endif %}
   <dl>
     <dt>切入角度</dt><dd>{{ t.angle }}</dd>
     {% if t.why %}<dt>为什么是现在</dt><dd>{{ t.why }}</dd>{% endif %}
@@ -13,22 +12,24 @@
     {% if t.user_take and t.status != 'suggested' %}<dt>你的观点</dt><dd>{{ t.user_take }}</dd>{% endif %}
   </dl>
   {% if t.trend_terms %}<ul class="chips small">{% for term in t.trend_terms %}<li>{{ term }}</li>{% endfor %}</ul>{% endif %}
-  <details class="items"><summary class="muted">{{ topic_items|length }} 条来源素材</summary>
+  {% if topic_items %}
+  <details class="items"><summary>{{ topic_items|length }} 条来源素材</summary>
     <ul>{% for it in topic_items %}
       <li><span class="src src-{{ it.source }}">{{ (it.meta or {}).get('feed') or it.source }}</span>
         {% if it.url %}<a href="{{ it.url }}" target="_blank" rel="noopener noreferrer">{{ it.title }}</a>{% else %}{{ it.title }}{% endif %}</li>
     {% endfor %}</ul>
   </details>
+  {% endif %}
   {% if t.status == 'suggested' %}
   <form data-post action="/topics/{{ t.id }}/write" class="take">
-    <textarea name="take" rows="3" placeholder="你的观点（可选，但这是避免 AI 味最有效的办法）：你自己怎么看？随手写几句就行。">{{ t.user_take or '' }}</textarea>
+    <textarea name="take" rows="3" aria-label="你的观点（可选）" placeholder="你自己怎么看？随手写几句，草稿会围绕它写，最不容易有 AI 味。可以不写。">{{ t.user_take or '' }}</textarea>
     <div class="row actions">
-      <select name="format" title="串推 = 3–6 条连发">
+      <select name="format" aria-label="形式" title="串推 = 3–6 条连发">
         <option value="thread" {% if t.format != 'quick' %}selected{% endif %}>串推</option>
-        <option value="quick" {% if t.format == 'quick' %}selected{% endif %}>单条推文</option>
+        <option value="quick" {% if t.format == 'quick' %}selected{% endif %}>单条</option>
       </select>
-      <button class="primary" data-busy="AI 写稿中（初稿→润色→优化），通常 1–2 分钟">写这篇（中英各一篇）</button>
-      <button class="link right" formaction="/topics/{{ t.id }}/dismiss" formnovalidate>不要这个选题</button>
+      <button class="primary" data-busy="写稿中（初稿 → 润色 → 优化），通常 1–2 分钟">生成中英草稿</button>
+      <button class="ghost right" formaction="/topics/{{ t.id }}/dismiss" formnovalidate>跳过</button>
     </div>
   </form>
   {% endif %}

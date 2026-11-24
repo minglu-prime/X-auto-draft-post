@@ -7,9 +7,10 @@ import re
 from html import escape as html_escape
 from collections.abc import Callable
 from contextlib import asynccontextmanager
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Annotated
+from urllib.parse import urlencode
 from zoneinfo import ZoneInfo
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
@@ -51,14 +52,39 @@ REWRITE_PRESETS = {
 }
 PRESET_ZH = {"shorter": "更短更紧凑", "punchier": "开头更抓人", "personal": "更有个人经历",
              "single": "改成单条推文", "regenerate": "换个结构重写"}
-STATUS_ZH = {"pending": "待审", "scheduled": "已排期", "failed": "发布失败", "published": "已发布",
-             "dry_run": "演练", "rejected": "已驳回", "suggested": "待选", "drafted": "已写稿", "dismissed": "已跳过"}
+STATUS_ZH = {"pending": "待审", "scheduled": "已排期", "due": "该发了", "failed": "发布失败", "published": "已发布",
+             "dry_run": "未发出", "rejected": "已跳过", "suggested": "待选", "drafted": "已写稿", "dismissed": "已跳过"}
 STAGE_ZH = {"written": "初稿", "polished": "润色", "optimized": "优化"}
 WEEKDAY_ZH = "一二三四五六日"
+STALE_MATERIAL = timedelta(hours=2)  # suggesting topics refreshes material older than this first
+
+# Display-only Chinese for pipeline/check.py warnings (stored warnings stay English: generate.py matches them).
+_WARN_ZH = [
+    (re.compile(r'^AI-ish: "(\d+) em dashes"$'), "像 AI 写的：用了 {0} 个破折号"),
+    (re.compile(r'^AI-ish: "(.*)"$', re.DOTALL), "像 AI 写的：「{0}」"),
+    (re.compile(r"^Thread has (\d+) tweets \(max (\d+)\)$"), "串推有 {0} 条，上限 {1} 条"),
+    (re.compile(r"^Tweet (\d+) is (\d+)/(\d+) weighted characters$"), "第 {0} 条 {1}/{2}，超长了"),
+    (re.compile(r"^Tweet (\d+) is empty$"), "第 {0} 条是空的"),
+    (re.compile(r"^Link not found in the source material: (.*)$"), "素材里没有这个链接：{0}"),
+    (re.compile(r"^Number “(.*)” does not appear in the sources — verify it$"), "数字「{0}」在素材里找不到，核对一下"),
+    (re.compile(r"^Very similar to a recent post \((\d+%) match\)$"), "和最近一篇很像（相似度 {0}）"),
+    (re.compile(r"^Possible secret, email or personal path in the text$"), "可能含密钥、邮箱或个人路径"),
+    (re.compile(r"^Draft is empty$"), "草稿是空的"),
+]
 
 
-def current_step(n_items: int, n_topics: int, n_pending: int, n_scheduled: int) -> str:
+def warn_zh(warning: str) -> str:
+    for pattern, zh in _WARN_ZH:
+        m = pattern.match(warning)
+        if m:
+            return zh.format(*m.groups())
+    return warning
+
+
+def current_step(n_items: int, n_topics: int, n_pending: int, n_scheduled: int, n_due: int = 0) -> str:
     """Which workflow step the dashboard should point the user at next."""
+    if n_due:
+        return "publish"  # time-sensitive: a post is waiting to be posted by hand
     if n_items == 0:
         return "collect"
     if n_pending:
@@ -81,6 +107,11 @@ def create_app(
     allowed_hosts: tuple[str, ...] = ("127.0.0.1", "localhost"),
 ) -> FastAPI:
     engine = get_engine(cfg.resolve_path(cfg.db_path))
+    with Session(engine) as s:  # older versions marked unposted drafts "dry_run"; they still need posting
+        for d in s.exec(select(Draft).where(Draft.status == DraftStatus.DRY_RUN)).all():
+            d.status = DraftStatus.DUE
+            s.add(d)
+        s.commit()
     llm_factory = llm_factory or (lambda: make_llm(cfg.llm))
     x_client_factory = x_client_factory or (lambda: service.make_x_client(cfg))
     pending_auth: dict[str, PendingAuth] = {}
@@ -159,7 +190,7 @@ def create_app(
                                  stage_zh=STAGE_ZH, cfg=cfg, next_slot_label=next_slot_label,
                                  take_flash=take_flash, images_for=media.images_for,
                                  # cache-buster so browsers pick up new CSS/JS after an update
-                                 asset_v=int(max(p.stat().st_mtime for p in (HERE / "static").iterdir())))
+                                 asset_v=lambda: int(max(p.stat().st_mtime for p in (HERE / "static").iterdir())))
     templates.env.filters["local"] = local
     templates.env.filters["local_day"] = local_day
 
@@ -179,15 +210,26 @@ def create_app(
             raise HTTPException(404, "draft not found")
         return d
 
-    def card(request: Request, s: Session, d: Draft, message: str = "", error: str = "") -> HTMLResponse:
+    def card(request: Request, s: Session, d: Draft, message: str = "", error: str = "",
+             undo: str = "") -> HTMLResponse:
+        """A draft card. `message` becomes a toast (with an undo button when `undo` is a POST path)."""
         topic = s.get(Topic, d.topic_id) if d.topic_id else None
         return templates.TemplateResponse(request, "_draft.html", {
-            "d": d, "topic": topic, "message": message, "error": error,
+            "d": d, "topic": topic, "message": message, "error": error, "undo": undo,
         })
+
+    def gone(request: Request, el_id: str, message: str, undo: str) -> HTMLResponse:
+        """Hidden placeholder that takes a removed card's place, so undo can put the card back there."""
+        return templates.TemplateResponse(request, "_gone.html", {"el_id": el_id, "message": message, "undo": undo})
 
     def x_status() -> dict:
         client = x_client_factory()
-        return {"connected": client.connected, "client_id_set": bool(client.client_id)}
+        connected = client.connected
+        return {"connected": connected, "client_id_set": bool(client.client_id),
+                "auto": service.auto_posting(cfg, client)}
+
+    templates.env.globals["x_state"] = x_status
+    templates.env.filters["warn_zh"] = warn_zh
 
     # ---- pages -----------------------------------------------------------------
     def group_by_topic(s: Session, drafts) -> list[dict]:
@@ -204,22 +246,36 @@ def create_app(
     def index(request: Request):
         with Session(engine) as s:
             drafts = s.exec(select(Draft).where(
-                col(Draft.status).in_([DraftStatus.PENDING, DraftStatus.SCHEDULED, DraftStatus.FAILED])
+                col(Draft.status).in_([DraftStatus.PENDING, DraftStatus.SCHEDULED, DraftStatus.DUE,
+                                       DraftStatus.FAILED])
             ).order_by(col(Draft.topic_id).desc(), Draft.lang.desc())).all()
-            review = [d for d in drafts if d.status != DraftStatus.SCHEDULED]
-            scheduled = sorted((d for d in drafts if d.status == DraftStatus.SCHEDULED),
-                               key=lambda d: to_utc(d.scheduled_at) if d.scheduled_at else utcnow())
+            review = [d for d in drafts if d.status in (DraftStatus.PENDING, DraftStatus.FAILED)]
+            def by_time(d: Draft) -> datetime:
+                return to_utc(d.scheduled_at) if d.scheduled_at else utcnow()
+            due = sorted((d for d in drafts if d.status == DraftStatus.DUE), key=by_time)
+            scheduled = sorted((d for d in drafts if d.status == DraftStatus.SCHEDULED), key=by_time)
             topics = s.exec(select(Topic).where(Topic.status == TopicStatus.SUGGESTED)
-                            .order_by(col(Topic.created_at).desc(), col(Topic.score).desc()).limit(40)).all()
+                            .order_by(col(Topic.created_at).desc()).limit(40)).all()
+            topics = sorted(topics, key=lambda t: -t.score)  # best first; the page folds the tail
             n_items = s.exec(select(func.count()).select_from(Item)).one()
             return templates.TemplateResponse(request, "index.html", {
-                "review_groups": group_by_topic(s, review), "scheduled": scheduled,
+                "review_groups": group_by_topic(s, review), "scheduled": scheduled, "due": due,
                 "topics": topics, "items_by_topic": {t.id: items_for_topic(s, t) for t in topics},
                 "snap": trend_snapshot(cfg, s, utcnow() - timedelta(days=cfg.lookback_days)),
                 "n_items": n_items, "n_review": len(review),
-                "step": current_step(n_items, len(topics), len(review), len(scheduled)),
+                "step": current_step(n_items, len(topics), len(review), len(scheduled), len(due)),
                 "x": x_status(),
             })
+
+    @app.get("/status")
+    def status():
+        """Counts the open dashboard polls, so it can say "a post is due" without a reload."""
+        with Session(engine) as s:
+            def count(*statuses: str) -> int:
+                return s.exec(select(func.count()).select_from(Draft)
+                              .where(col(Draft.status).in_(statuses))).one()
+            return {"due": count(DraftStatus.DUE), "review": count(DraftStatus.PENDING, DraftStatus.FAILED),
+                    "scheduled": count(DraftStatus.SCHEDULED)}
 
     @app.get("/topics")
     def topics_page():
@@ -233,14 +289,18 @@ def create_app(
     @app.post("/suggest")
     def suggest(days: int = Form(0), count: int = Form(0)):
         since = utcnow() - timedelta(days=days or cfg.lookback_days)
+        with Session(engine) as s:
+            last = s.exec(select(func.max(Item.collected_at))).one()
+        if last is None or to_utc(last) < utcnow() - STALE_MATERIAL:  # don't make the user collect first
+            run_collect(cfg, since)
         try:
             with Session(engine) as s:
                 created = suggest_topics(cfg, llm_factory(), s, since, count or None)
         except LLMError as e:
             return HTMLResponse(f"<p class='warn'>生成选题失败：{html_escape(str(e))}</p>")
         if not created:
-            return HTMLResponse("<p class='warn'>没有生成选题：素材不够，先收集素材。</p>")
-        flash.append(f"<p class='ok'>生成了 {len(created)} 个选题，挑一个写吧。</p>")
+            return HTMLResponse("<p class='warn'>这次没找到值得写的选题，过几小时素材多了再试。</p>")
+        flash.append(f"<p class='ok'>已生成 {len(created)} 个选题</p>")
         return Response(status_code=204, headers={"X-Redirect": "/#topics"})
 
     @app.post("/topics/{topic_id}/write", response_class=HTMLResponse)
@@ -261,19 +321,33 @@ def create_app(
                 drafts = produce_drafts(cfg, llm_factory(), s, t)
             except LLMError as e:
                 return topic_card(request, s, t, error=f"写稿失败：{e}")
-            flash.append(f"<p class='ok'>《{html_escape(t.title)}》已写好 {len(drafts)} 篇草稿"
-                         "（初稿 → 润色 → 优化），在下面审稿。</p>")
+            flash.append(f"<p class='ok'>《{html_escape(t.title)}》中英草稿已生成（{len(drafts)} 篇）</p>")
             return Response(status_code=204, headers={"X-Redirect": "/#drafts"})
 
     @app.post("/topics/{topic_id}/dismiss", response_class=HTMLResponse)
-    def dismiss_topic(topic_id: int):
+    def dismiss_topic(request: Request, topic_id: int):
         with Session(engine) as s:
             t = s.get(Topic, topic_id)
-            if t and t.status == TopicStatus.SUGGESTED:
+            if not t:
+                raise HTTPException(404, "topic not found")
+            if t.status == TopicStatus.SUGGESTED:
                 t.status = TopicStatus.DISMISSED
                 s.add(t)
                 s.commit()
-        return HTMLResponse("")
+            return gone(request, f"topic-{t.id}", f"已跳过「{t.title}」", f"/topics/{t.id}/restore")
+
+    @app.post("/topics/{topic_id}/restore", response_class=HTMLResponse)
+    def restore_topic(request: Request, topic_id: int):
+        with Session(engine) as s:
+            t = s.get(Topic, topic_id)
+            if not t:
+                raise HTTPException(404, "topic not found")
+            if t.status == TopicStatus.DISMISSED:
+                t.status = TopicStatus.SUGGESTED
+                s.add(t)
+                s.commit()
+                s.refresh(t)
+            return topic_card(request, s, t, message="已撤销")
 
     @app.post("/drafts/{draft_id}/hook", response_class=HTMLResponse)
     def use_hook(request: Request, draft_id: int, index: int = Form(...)):
@@ -291,15 +365,18 @@ def create_app(
             s.add(d)
             s.commit()
             s.refresh(d)
-            return card(request, s, d, message="开头已替换（旧开头保留为备选）")
+            return card(request, s, d, message="已换开头，原来的留作备选")
 
     @app.get("/history", response_class=HTMLResponse)
     def history(request: Request):
         with Session(engine) as s:
-            drafts = s.exec(select(Draft).where(
-                col(Draft.status).in_([DraftStatus.PUBLISHED, DraftStatus.DRY_RUN, DraftStatus.REJECTED])
-            ).order_by(col(Draft.updated_at).desc()).limit(200)).all()
-            return templates.TemplateResponse(request, "history.html", {"drafts": drafts, "x": x_status()})
+            published = s.exec(select(Draft).where(Draft.status == DraftStatus.PUBLISHED)
+                               .order_by(col(Draft.published_at).desc()).limit(200)).all()
+            skipped = s.exec(select(Draft).where(Draft.status == DraftStatus.REJECTED)
+                             .order_by(col(Draft.updated_at).desc()).limit(100)).all()
+            return templates.TemplateResponse(request, "history.html", {
+                "drafts": published, "skipped": skipped, "x": x_status(),
+                "can_refresh": any(d.tweet_ids for d in published)})
 
     @app.get("/sources", response_class=HTMLResponse)
     def sources(request: Request):
@@ -325,28 +402,67 @@ def create_app(
         except Exception as e:  # noqa: BLE001 - shown to the user
             return HTMLResponse(f"<p class='warn'>保存失败：{html_escape(str(e))}</p>")
         info = voice.summary(cfg)
-        return HTMLResponse(f"<p class='ok'>已保存 {html_escape(path.name)}。现在有 {info['own']} 篇你自己的文字，"
-                            f"{info['references']} 段参考摘录。</p>")
+        return HTMLResponse(f"<p class='ok'>文风已更新（{html_escape(path.name)}）：现在有 {info['own']} 篇你自己的文字，"
+                            f"{info['references']} 段参考摘录</p>")
 
     # ---- draft actions -----------------------------------------------------------
     @app.post("/drafts/{draft_id}/save", response_class=HTMLResponse)
-    def save(request: Request, draft_id: int, body: str = Form(...)):
+    def save(request: Request, draft_id: int, body: str = Form(""),
+             tweet: Annotated[list[str] | None, Form()] = None, src: Annotated[list[int] | None, Form()] = None):
+        """Save edited text, either one box per tweet (`tweet` fields, with `src` = each box's previous
+        position so images follow their tweet) or one `body` split on `---` lines.
+
+        Autosave (X-Autosave header) gets only the warnings fragment back, so the editor being typed in
+        is never replaced."""
+        autosave = request.headers.get("x-autosave") == "1"
+        def refuse(why: str) -> HTMLResponse:
+            if autosave:
+                return templates.TemplateResponse(request, "_draft_meta.html", {"d": d, "meta_error": why})
+            return card(request, s, d, error=why)
+
         with Session(engine) as s:
             d = get_draft(s, draft_id)
-            tweets = split_tweets(body)
+            # Once posting started, the text must match what is on X: no more edits.
+            if d.tweet_ids:
+                return refuse(f"这篇已经发出 {len(d.tweet_ids)} 条，不能再改")
+            if d.status not in (DraftStatus.PENDING, DraftStatus.FAILED, DraftStatus.SCHEDULED):
+                return refuse(f"这篇现在是「{STATUS_ZH.get(d.status, d.status)}」，不能再改；刷新页面看看")
+            if tweet is not None:
+                old_images = media.images_for(d)
+                pairs = [(t.strip(), (src or [])[i] if i < len(src or []) else -1) for i, t in enumerate(tweet)]
+                emptied = [n for n, (t, i) in enumerate(pairs, 1) if not t and 0 <= i < len(old_images)
+                           and old_images[i]]
+                if emptied:  # dropping that tweet would silently drop its images
+                    return refuse(f"第 {emptied[0]} 条有配图，先移除图片再清空这一条")
+                pairs = [(t, i) for t, i in pairs if t]
+                tweets = [t for t, _ in pairs]
+            else:
+                tweets, pairs = split_tweets(body), None
             if not tweets:
+                if autosave:  # every box emptied mid-edit: keep the last saved text, say why
+                    return templates.TemplateResponse(request, "_draft_meta.html", {
+                        "d": d, "meta_error": "正文是空的，没有保存"})
                 return card(request, s, d, error="草稿至少要有一条推文")
-            d.tweets, d.edited, d.updated_at = tweets, True, utcnow()
-            d.images = media.images_for(d)  # keep images aligned when tweets were added or removed
-            topic = s.get(Topic, d.topic_id) if d.topic_id else None
-            d.warnings = run_checks(cfg, s, d, items_for_topic(s, topic) if topic else [])
-            s.add(d)
-            s.commit()
-            s.refresh(d)
+            old_images = media.images_for(d)
+            if pairs is not None:  # boxes were added, removed or reordered: images move with their tweet
+                images = [list(old_images[i]) if 0 <= i < len(old_images) else [] for _, i in pairs]
+            else:
+                images = None
+            if tweets != d.tweets or (images is not None and images != old_images):
+                d.tweets, d.edited, d.updated_at = tweets, True, utcnow()
+                d.images = images if images is not None else media.images_for(d)
+                topic = s.get(Topic, d.topic_id) if d.topic_id else None
+                d.warnings = run_checks(cfg, s, d, items_for_topic(s, topic) if topic else [])
+                s.add(d)
+                s.commit()
+                s.refresh(d)
+            if autosave:
+                return templates.TemplateResponse(request, "_draft_meta.html", {"d": d})
             return card(request, s, d, message="已保存")
 
     @app.post("/drafts/{draft_id}/images", response_class=HTMLResponse)
-    async def add_image(request: Request, draft_id: int, file: Annotated[UploadFile, File()], tweet: int = Form(...)):
+    async def add_image(request: Request, draft_id: int, file: Annotated[UploadFile, File()],
+                        tweet: int = Form(1)):
         data = await file.read(media.MAX_BYTES + 1)
         with Session(engine) as s:
             d = get_draft(s, draft_id)
@@ -372,7 +488,22 @@ def create_app(
             s.add(d)
             s.commit()
             s.refresh(d)
-            return card(request, s, d, message="已删除配图")
+            return card(request, s, d, message="已删除配图",
+                        undo=f"/drafts/{d.id}/images/restore?{urlencode({'tweet': tweet, 'name': name})}")
+
+    @app.post("/drafts/{draft_id}/images/restore", response_class=HTMLResponse)
+    def restore_image(request: Request, draft_id: int, tweet: int, name: str):
+        with Session(engine) as s:
+            d = get_draft(s, draft_id)
+            try:
+                media.restore_image(cfg, d, tweet - 1, name)
+            except ValueError as e:
+                return card(request, s, d, error=str(e))
+            d.updated_at = utcnow()
+            s.add(d)
+            s.commit()
+            s.refresh(d)
+            return card(request, s, d, message="已撤销")
 
     @app.get("/media/{draft_id}/{name}")
     def serve_image(draft_id: int, name: str):
@@ -397,6 +528,7 @@ def create_app(
             except LLMError as e:
                 return card(request, s, d, error=f"改写失败：{e}")
             d.tweets = [t.strip() for t in version.tweets if t.strip()]
+            d.images = media.images_for(d)
             d.source_urls = version.source_urls or d.source_urls
             d.edited, d.updated_at = True, utcnow()
             d.warnings = run_checks(cfg, s, d, items)
@@ -406,8 +538,7 @@ def create_app(
             return card(request, s, d, message="已改写")
 
     @app.post("/drafts/{draft_id}/approve", response_class=HTMLResponse)
-    def approve(request: Request, draft_id: int, mode: str = Form("slot"), when: str = Form(""),
-                tz_offset: int = Form(0)):
+    def approve(request: Request, draft_id: int, mode: str = Form("slot"), when: str = Form("")):
         with Session(engine) as s:
             d = get_draft(s, draft_id)
             at = None
@@ -416,8 +547,9 @@ def create_app(
                     local_dt = datetime.fromisoformat(when)
                 except ValueError:
                     return card(request, s, d, error="日期时间格式不对")
-                # Browser offset is minutes *behind* UTC (getTimezoneOffset).
-                at = (local_dt + timedelta(minutes=tz_offset)).replace(tzinfo=timezone.utc)
+                # The time is read in the configured timezone (shown next to the field), like the slots,
+                # so it means the same thing whatever the browser's timezone is.
+                at = to_utc(local_dt.replace(tzinfo=tz)) if local_dt.tzinfo is None else to_utc(local_dt)
             elif mode == "slot":
                 at = service.next_free_slot(cfg, s)
                 if at is None:
@@ -428,22 +560,46 @@ def create_app(
                 return card(request, s, d, error=str(e))
             if mode == "now":  # publish right away instead of waiting for the scheduler
                 service.publish_draft(cfg, s, d, x_client_factory)
-                msg = {DraftStatus.DRY_RUN: "演练模式：已记录，没有真的发出（publish.enabled 为 false）",
-                       DraftStatus.PUBLISHED: "已发布到 X"}.get(d.status, "")
+                msg = {DraftStatus.DUE: "可以发了：逐条复制到 X，发完点「我已发出」",
+                       DraftStatus.PUBLISHED: "已发到 X"}.get(d.status, "")
                 return card(request, s, d, message=msg, error=d.publish_error or "")
-            return card(request, s, d, message=f"已排期：{local_day(d.scheduled_at)}（{cfg.timezone}），到点自动发布")
+            how = "到点自动发到 X" if x_status()["auto"] else "到点提醒你发"
+            return card(request, s, d, message=f"已排期：{local_day(d.scheduled_at)}，{how}",
+                        undo=f"/drafts/{d.id}/unschedule")
 
     @app.post("/drafts/{draft_id}/unschedule", response_class=HTMLResponse)
     def unschedule(request: Request, draft_id: int):
         with Session(engine) as s:
             d = service.unschedule(s, get_draft(s, draft_id))
-            return card(request, s, d, message="已取消排期，回到待审")
+            return card(request, s, d, message="已撤回到待审")
 
     @app.post("/drafts/{draft_id}/reject", response_class=HTMLResponse)
     def reject(request: Request, draft_id: int):
         with Session(engine) as s:
             d = service.reject(s, get_draft(s, draft_id))
-            return card(request, s, d, message="已驳回")
+            return gone(request, f"draft-{d.id}", "已跳过这篇", f"/drafts/{d.id}/restore")
+
+    @app.post("/drafts/{draft_id}/restore", response_class=HTMLResponse)
+    def restore(request: Request, draft_id: int):
+        with Session(engine) as s:
+            d = service.restore(s, get_draft(s, draft_id))
+            return card(request, s, d, message="已放回待审")
+
+    @app.post("/drafts/{draft_id}/posted", response_class=HTMLResponse)
+    def posted(request: Request, draft_id: int, url: str = Form("")):
+        with Session(engine) as s:
+            d = get_draft(s, draft_id)
+            try:
+                service.mark_posted(s, d, url)
+            except ValueError as e:
+                return card(request, s, d, error=str(e))
+            return card(request, s, d, message="已记到「已发布」", undo=f"/drafts/{d.id}/unposted")
+
+    @app.post("/drafts/{draft_id}/unposted", response_class=HTMLResponse)
+    def unposted(request: Request, draft_id: int):
+        with Session(engine) as s:
+            d = service.unmark_posted(s, get_draft(s, draft_id))
+            return card(request, s, d, message="已撤销")
 
     # ---- inbox / collect / generate ----------------------------------------------
     @app.post("/inbox", response_class=HTMLResponse)
@@ -461,21 +617,22 @@ def create_app(
             fm.append(f"url: {url.strip()}")
         text = "---\n" + "\n".join(fm) + "\n---\n" + (f"# {title.strip()}\n" if title.strip() else "") + body.strip() + "\n"
         path.write_text(text, encoding="utf-8")
-        return HTMLResponse(f'<p class="ok">已保存 {html_escape(path.name)}，下次收集素材时会用上。</p>')
+        return HTMLResponse(f'<p class="ok">笔记已保存（{html_escape(path.name)}），下次收集会用到</p>')
 
     @app.post("/collect", response_class=HTMLResponse)
     def collect(days: int = Form(0), back: str = Form("/")):
         since = utcnow() - timedelta(days=days or cfg.lookback_days)
         reports = run_collect(cfg, since)
-        rows = "".join(
-            f"<li><b>{html_escape(r.source)}</b>：" + ("已跳过" if r.skipped else
-                f"找到 {r.collected} 条，新增 {r.counts.new}，更新 {r.counts.updated}"
-                + (f"，<span class='warn'>{len(r.errors)} 个错误</span>" if r.errors else "")) + "</li>"
-            for r in reports
-        )
-        errs = "".join(f"<li class='warn'>{html_escape(r.source)}：{html_escape(str(e))}</li>"
-                       for r in reports for e in r.errors)
-        flash.append(f"<p class='ok'>素材收集完成</p><ul>{rows}{errs}</ul>")
+        new = sum(r.counts.new for r in reports if not r.skipped)
+        updated = sum(r.counts.updated for r in reports if not r.skipped)
+        errors = [(r.source, e) for r in reports for e in r.errors]
+        summary = f"已收集：新增 {new}，更新 {updated}"
+        if errors:  # partial failure is not a success: say so, keep the reasons visible
+            failed = len({src for src, _ in errors})
+            errs = "".join(f"<li>{html_escape(src)}：{html_escape(str(e))}</li>" for src, e in errors)
+            flash.append(f"<p class='warn'>{summary}；{failed} 个来源失败</p><ul class='warn'>{errs}</ul>")
+        else:
+            flash.append(f"<p class='ok'>{summary}</p>")
         local_path = back.startswith("/") and not back.startswith("//")  # no open redirects
         return Response(status_code=204, headers={"X-Redirect": back if local_path else "/"})
 

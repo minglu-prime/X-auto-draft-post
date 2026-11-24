@@ -1,18 +1,19 @@
 {% extends "base.html" %}
 {% block title %}已发布{% endblock %}
 {% block content %}
+{% if can_refresh and x.connected %}
 <section class="toolbar">
-  <form data-post action="/metrics/refresh" data-target="#run-result"><button data-busy="正在从 X 拉取数据">刷新互动数据</button></form>
+  <form data-post action="/metrics/refresh" data-target="#run-result"><button data-busy="从 X 拉取数据中">更新互动数据</button></form>
 </section>
-<div id="run-result" class="result"></div>
-{% if not drafts %}<p class="empty">还没有发布过。批准的草稿到点发布后会出现在这里。</p>{% else %}
+{% endif %}
+<div id="run-result" class="result" role="status"></div>
+{% if not drafts %}<p class="empty">还没有发布记录。发完一篇点「我已发出」，就会记在这里。</p>{% else %}
 <table class="history">
-  <thead><tr><th>时间</th><th>状态</th><th>内容</th><th>赞</th><th>转发</th><th>回复</th><th>浏览</th></tr></thead>
+  <thead><tr><th>时间</th><th>内容</th><th>赞</th><th>转发</th><th>回复</th><th>浏览</th></tr></thead>
   <tbody>
   {% for d in drafts %}
   <tr>
-    <td class="nowrap">{{ (d.published_at or d.updated_at)|local }}</td>
-    <td><span class="badge st-{{ d.status }}">{{ status_zh.get(d.status, d.status) }}</span> <span class="muted">{{ '中' if d.lang == 'zh' else '英' }}</span></td>
+    <td class="nowrap">{{ d.published_at|local_day }} <span class="muted">{{ '中' if d.lang == 'zh' else '英' }}</span></td>
     <td>{% if d.tweet_ids %}<a href="https://x.com/i/web/status/{{ d.tweet_ids[0] }}" target="_blank" rel="noopener noreferrer">{{ d.tweets[0][:120] }}</a>{% else %}{{ d.tweets[0][:120] }}{% endif %}{% if d.tweets|length > 1 %} <span class="muted">（+{{ d.tweets|length - 1 }}）</span>{% endif %}</td>
     <td class="num">{{ d.metrics.get('like_count', '–') }}</td>
     <td class="num">{{ d.metrics.get('retweet_count', '–') }}</td>
@@ -22,5 +23,16 @@
   {% endfor %}
   </tbody>
 </table>
+{% if not x.connected %}<p class="muted small">手动发布拿不到互动数据，去 X 上看。</p>{% endif %}
+{% endif %}
+
+{% if skipped %}
+<details class="skipped">
+  <summary>跳过的草稿 {{ skipped|length }} 篇</summary>
+  <ul class="itemlist">{% for d in skipped %}
+    <li id="draft-{{ d.id }}" data-swap><span class="muted">{{ d.updated_at|local_day }}</span> {{ d.tweets[0][:80] if d.tweets else '' }}
+      <form data-post action="/drafts/{{ d.id }}/restore" class="inline"><button class="link">放回待审</button></form></li>
+  {% endfor %}</ul>
+</details>
 {% endif %}
 {% endblock %}

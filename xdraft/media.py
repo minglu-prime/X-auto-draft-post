@@ -74,12 +74,21 @@ def save_image(cfg: Config, draft: Draft, index: int, data: bytes) -> str:
 
 
 def remove_image(cfg: Config, draft: Draft, index: int, name: str) -> None:
-    """Detach an image from tweet `index` and delete its file. Caller commits the draft."""
+    """Detach an image from tweet `index`. The file is kept so the removal can be undone. Caller commits."""
     images = images_for(draft)
     if not 0 <= index < len(images) or name not in images[index]:
         raise ValueError("找不到这张配图")
     images[index].remove(name)
     draft.images = images
-    path = image_path(cfg, draft, name)  # None now unless another tweet still uses it
-    if path is None:
-        (media_dir(cfg, draft.id) / name).unlink(missing_ok=True)
+
+
+def restore_image(cfg: Config, draft: Draft, index: int, name: str) -> None:
+    """Undo remove_image: re-attach a file that is still in this draft's media folder. Caller commits."""
+    images = images_for(draft)
+    if not 0 <= index < len(images) or not NAME_RE.match(name) or not (media_dir(cfg, draft.id) / name).is_file():
+        raise ValueError("这张配图已经找不到了")
+    if name not in images[index]:
+        if len(images[index]) >= MAX_PER_TWEET:
+            raise ValueError(f"每条推文最多 {MAX_PER_TWEET} 张图")
+        images[index].append(name)
+    draft.images = images

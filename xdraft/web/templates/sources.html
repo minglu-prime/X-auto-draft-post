@@ -5,7 +5,7 @@
   <form data-post action="/collect" data-target="#run-result">
     <input type="hidden" name="back" value="/sources">
     <label>回看天数 <input type="number" name="days" min="1" max="60" value="{{ cfg.lookback_days }}"></label>
-    <button data-busy="正在收集素材">立即收集</button>
+    <button data-busy="收集素材中">收集素材</button>
   </form>
 </section>
 <div id="run-result" class="result"></div>
@@ -13,7 +13,7 @@
   <thead><tr><th>来源</th><th>条数</th><th>最新一条</th></tr></thead>
   <tbody>{% for source, n, newest in stats %}
     <tr><td><span class="src src-{{ source }}">{{ source }}</span></td><td class="num">{{ n }}</td><td>{{ newest.strftime('%Y-%m-%d %H:%M') if newest else '' }}</td></tr>
-  {% else %}<tr><td colspan="3" class="muted">还没有收集过素材。点上面的「立即收集」。</td></tr>{% endfor %}</tbody>
+  {% else %}<tr><td colspan="3" class="muted">还没有素材。点上面的「收集素材」。</td></tr>{% endfor %}</tbody>
 </table>
 <h2>最新素材</h2>
 <ul class="itemlist">{% for it in items %}
