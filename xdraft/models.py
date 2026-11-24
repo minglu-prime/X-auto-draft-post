@@ -52,12 +52,14 @@ class Topic(SQLModel, table=True):
 class DraftStatus:
     PENDING = "pending"        # waiting for review
     SCHEDULED = "scheduled"    # approved, publishes at scheduled_at
-    PUBLISHED = "published"    # posted to X
-    DRY_RUN = "dry_run"        # "published" with publishing disabled
+    PUBLISHING = "publishing"  # claimed by one publisher; being posted right now
+    DUE = "due"                # manual posting: its slot came, waiting for the author to post it by hand
+    PUBLISHED = "published"    # posted to X (by xdraft or by hand)
+    DRY_RUN = "dry_run"        # legacy: older versions' "published with publishing disabled" (migrated to due)
     FAILED = "failed"
     REJECTED = "rejected"
 
-    ALL = (PENDING, SCHEDULED, PUBLISHED, DRY_RUN, FAILED, REJECTED)
+    ALL = (PENDING, SCHEDULED, PUBLISHING, DUE, PUBLISHED, DRY_RUN, FAILED, REJECTED)
 
 
 class Draft(SQLModel, table=True):

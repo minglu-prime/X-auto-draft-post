@@ -4,8 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>xdraft · {% block title %}工作台{% endblock %}</title>
-<link rel="stylesheet" href="/static/style.css?v={{ asset_v }}">
-<script src="/static/app.js?v={{ asset_v }}" defer></script>
+{% set v = asset_v() %}
+<link rel="stylesheet" href="/static/style.css?v={{ v }}">
+<script src="/static/app.js?v={{ v }}" defer></script>
 </head>
 <body>
 <div id="busy-bar" hidden></div>
@@ -19,20 +20,18 @@
     <a href="/history" {% if path == '/history' %}class="on"{% endif %}>已发布</a>
   </nav>
   <div class="status">
-    {% if cfg.publish.enabled %}<span class="badge live" title="批准后会真的发到 X">真实发布</span>
-    {% else %}<span class="badge dry" title="config.yaml 里 publish.enabled 为 false：只记录，不会真的发到 X">演练模式（不会真发）</span>{% endif %}
+    {% if x.auto %}<span class="badge live" title="到点由 xdraft 发到 X">自动发布</span>
+    {% else %}<span class="badge manual" title="X 没连接自动发布：到点在工作台提醒你，复制后自己发">手动发布</span>{% endif %}
     {% if x.connected %}
-      <span class="badge ok">X 已连接</span>
-      <form data-post action="/x/logout" class="inline"><button class="link">断开</button></form>
-    {% elif x.client_id_set %}<a class="badge" href="/x/login">连接 X</a>
-    {% else %}<span class="badge muted" title="在 .env 里填 X_CLIENT_ID">X 未配置</span>{% endif %}
+      <form data-post action="/x/logout" class="inline"><button class="link" title="断开后改为手动发布">断开 X</button></form>
+    {% elif x.client_id_set %}<a class="badge" href="/x/login" title="连接后，开启 publish.enabled 就能自动发">连接 X</a>{% endif %}
   </div>
 </header>
 <main>
 {% set flashes = take_flash() %}
-{% if flashes %}<div class="result flash">{% for m in flashes %}{{ m|safe }}{% endfor %}</div>{% endif %}
+{% if flashes %}<div class="result flash" role="status">{% for m in flashes %}{{ m|safe }}{% endfor %}</div>{% endif %}
 {% block content %}{% endblock %}
 </main>
-<div id="toasts" aria-live="polite"></div>
+<div id="toasts"></div>
 </body>
 </html>

@@ -1,103 +1,134 @@
-<article class="draft status-{{ d.status }}" id="draft-{{ d.id }}" data-swap>
+{% set n = d.tweets|length %}
+{% set imgs = images_for(d) %}
+{% set editable = d.status in ('pending', 'failed', 'scheduled') and not d.tweet_ids %}
+{% set ns = namespace(over=false) %}{% for t in d.tweets %}{% if weighted_length(t) > MAX_WEIGHTED %}{% set ns.over = true %}{% endif %}{% endfor %}
+<article class="draft status-{{ d.status }}" id="draft-{{ d.id }}" data-swap data-draft="{{ d.id }}">
   <header>
     <span class="lang">{{ '中文' if d.lang == 'zh' else '英文' }}</span>
     <span class="badge st-{{ d.status }}">{{ status_zh.get(d.status, d.status) }}</span>
+    {% if d.stage != 'optimized' %}
     {% set reached = (d.revisions or [])|map(attribute='stage')|list %}
-    <span class="stages" title="AI 流程进度">{% for st in ('written', 'polished', 'optimized') %}<span class="{{ 'done' if st in reached or st == d.stage else '' }}">{{ stage_zh[st] }}</span>{% endfor %}</span>
-    {% if d.edited %}<span class="muted">已手动修改</span>{% endif %}
-    {% if d.status == 'scheduled' and d.scheduled_at %}<span class="when">⏰ {{ d.scheduled_at|local_day }}</span>{% endif %}
-    <span class="muted right">#{{ d.id }}</span>
-  </header>
-  {% if message %}<p class="ok">{{ message }}</p>{% endif %}
-  {% if error %}<p class="warn">{{ error }}</p>{% elif d.publish_error %}<p class="warn">{{ d.publish_error }}</p>{% endif %}
-
-  {% if d.status in ('pending', 'failed', 'scheduled') %}
-  <form data-post action="/drafts/{{ d.id }}/save">
-    <textarea name="body" rows="{{ 3 + d.text|length // 60 }}" data-counter="#count-{{ d.id }}">{{ d.tweets|join('\n---\n') }}</textarea>
-    <div class="row">
-      <span class="counter" id="count-{{ d.id }}">{% for t in d.tweets %}{% set n = weighted_length(t) %}<span class="{{ 'over' if n > MAX_WEIGHTED else '' }}">{{ n }}/{{ MAX_WEIGHTED }}</span>{% endfor %}</span>
-      <span class="muted hint">串推的每一条之间用单独一行 --- 隔开</span>
-      <button>保存修改</button>
-    </div>
-  </form>
-  {% else %}
-  <div class="tweets">{% for t in d.tweets %}<p>{{ t }}</p>{% endfor %}</div>
-  {% endif %}
-
-  {% if d.warnings %}<ul class="warnings">{% for w in d.warnings %}<li>{{ w }}</li>{% endfor %}</ul>{% endif %}
-
-  {% set editable = d.status in ('pending', 'failed', 'scheduled') %}
-  {% set imgs = images_for(d) %}
-  {% if editable or imgs|map('length')|sum %}
-  <div class="images">
-    {% for names in imgs %}{% if names %}{% set tno = loop.index %}
-    <div class="img-row">
-      <span class="img-label">第 {{ tno }} 条</span>
-      {% for n in names %}
-      <figure>
-        <a href="/media/{{ d.id }}/{{ n }}" target="_blank" rel="noopener"><img src="/media/{{ d.id }}/{{ n }}" alt="第 {{ tno }} 条推文的配图" loading="lazy"></a>
-        {% if editable %}<form data-post action="/drafts/{{ d.id }}/images/remove">
-          <input type="hidden" name="tweet" value="{{ tno }}"><input type="hidden" name="name" value="{{ n }}">
-          <button class="img-del" title="删除这张图" aria-label="删除这张图">×</button>
-        </form>{% endif %}
-      </figure>
-      {% endfor %}
-    </div>
-    {% endif %}{% endfor %}
-    {% if editable %}
-    <form data-post action="/drafts/{{ d.id }}/images" class="row img-upload">
-      <label>配图给第 <select name="tweet">{% for t in d.tweets %}<option value="{{ loop.index }}">{{ loop.index }}</option>{% endfor %}</select> 条</label>
-      <input type="file" name="file" accept="image/png,image/jpeg,image/gif,image/webp" required>
-      <button data-busy="上传中">上传配图</button>
-      <span class="muted hint">每条最多 4 张，PNG/JPG/GIF/WEBP，≤5 MB</span>
-    </form>
+    <span class="stages" title="AI 还没走完全部流程">{% for st in ('written', 'polished', 'optimized') %}<span class="{{ 'done' if st in reached or st == d.stage else '' }}">{{ stage_zh[st] }}</span>{% endfor %}</span>
     {% endif %}
-  </div>
-  {% endif %}
+    {% if d.status in ('scheduled', 'due') and d.scheduled_at %}<span class="when">{{ d.scheduled_at|local_day }}</span>{% endif %}
+    <span class="save-state muted right" aria-live="polite"></span>
+  </header>
+  {% if message %}<p class="ok" hidden data-toast{% if undo %} data-undo="{{ undo }}"{% endif %}>{{ message }}</p>{% endif %}
+  {% if error %}<p class="warn" role="alert">{{ error }}</p>{% elif d.publish_error %}<p class="warn" role="alert">{{ d.publish_error }}</p>{% endif %}
 
-  {% if d.status in ('pending', 'failed') %}
-  {% set slot = next_slot_label() %}
+  {% if d.status == 'due' %}
+  {# Manual posting: everything needed to post by hand, in order. #}
+  <p class="due-hint">手动发布：按顺序复制到 X，第 2 条起点上一条的「回复」接上。发完点「我已发出」。</p>
+  <ol class="post-list">
+    {% for t in d.tweets %}
+    {% set tno = loop.index %}
+    <li class="post">
+      <div class="post-head">
+        <span class="num">{{ tno }}/{{ n }}</span>
+        <button type="button" class="copy" data-copy="{{ t }}">复制</button>
+      </div>
+      <p class="post-text">{{ t }}</p>
+      {% if imgs[loop.index0] %}
+      <div class="img-row">
+        {% for name in imgs[loop.index0] %}
+        <a href="/media/{{ d.id }}/{{ name }}" download="{{ d.id }}-{{ name }}" title="下载这张图"><img src="/media/{{ d.id }}/{{ name }}" alt="第 {{ tno }} 条推文的配图" loading="lazy"></a>
+        {% endfor %}
+        <span class="muted small">点图下载</span>
+      </div>
+      {% endif %}
+    </li>
+    {% endfor %}
+  </ol>
   <div class="row actions">
+    <a class="button" href="https://x.com/compose/post" target="_blank" rel="noopener">打开 X 发帖</a>
+    <form data-post action="/drafts/{{ d.id }}/posted" class="row grow">
+      <input name="url" type="url" inputmode="url" placeholder="第一条的链接（可选）" aria-label="第一条推文的链接，可选">
+      <button class="primary">我已发出</button>
+    </form>
+  </div>
+  <details class="more">
+    <summary>先不发了</summary>
+    <div class="row actions">
+      <form data-post action="/drafts/{{ d.id }}/unschedule"><button>撤回到待审</button></form>
+      <form data-post action="/drafts/{{ d.id }}/reject"><button class="ghost">跳过这篇</button></form>
+    </div>
+  </details>
+
+  {% elif editable %}
+  <div class="editor" data-autosave="/drafts/{{ d.id }}/save">
+    {% for t in d.tweets %}
+    {% set i = loop.index %}
+    {% set w = weighted_length(t) %}
+    <div class="tweet-block" data-src="{{ loop.index0 }}">
+      <div class="tweet-head">
+        <span class="num">{{ i }}/{{ n }}</span>
+        <span class="count{{ ' over' if w > MAX_WEIGHTED else '' }}" title="X 的计数：中文算 2，链接算 23">{{ w }}/{{ MAX_WEIGHTED }}</span>
+        {% if n > 1 %}<button type="button" class="link tweet-del"{% if imgs[loop.index0] %} disabled title="先删掉这条的图片"{% endif %}>删掉这条</button>{% endif %}
+      </div>
+      <textarea name="tweet" rows="{{ 2 + t|length // 52 }}" aria-label="第 {{ i }} 条推文" placeholder="写这一条。粘贴或拖进截图就能配图。">{{ t }}</textarea>
+      <div class="img-row">
+        {% for name in imgs[loop.index0] %}
+        <figure>
+          <a href="/media/{{ d.id }}/{{ name }}" target="_blank" rel="noopener"><img src="/media/{{ d.id }}/{{ name }}" alt="第 {{ i }} 条推文的配图" loading="lazy"></a>
+          <form data-post action="/drafts/{{ d.id }}/images/remove">
+            <input type="hidden" name="tweet" value="{{ i }}"><input type="hidden" name="name" value="{{ name }}">
+            <button class="img-del" title="移除这张图" aria-label="移除这张图">×</button>
+          </form>
+        </figure>
+        {% endfor %}
+        {% if imgs[loop.index0]|length < 4 %}
+        <form data-post action="/drafts/{{ d.id }}/images" class="add-img">
+          <input type="hidden" name="tweet" value="{{ i }}">
+          <label class="button small" title="也可以直接粘贴或拖进截图">添加图片<input type="file" name="file" accept="image/png,image/jpeg,image/gif,image/webp" data-autosubmit hidden></label>
+        </form>
+        {% endif %}
+      </div>
+    </div>
+    {% endfor %}
+    <button type="button" class="link add-tweet">＋ 加一条</button>
+  </div>
+  {% include "_draft_meta.html" %}
+
+  <div class="row actions">
+    {% if d.status in ('pending', 'failed') %}
+    {% set slot = next_slot_label() %}
     <form data-post action="/drafts/{{ d.id }}/approve">
       <input type="hidden" name="mode" value="slot">
-      <button class="primary" {% if not slot %}disabled title="没有空闲时段"{% endif %}>批准 → {{ slot or '无空闲时段' }}</button>
+      <button class="primary" data-approve data-slot="{{ 1 if slot else 0 }}"
+        {% if not slot %}disabled title="未来 14 天没有空闲时段"{% elif ns.over %}disabled title="有推文超长，改短后才能排期"{% endif %}>{{ '重新排到' if d.status == 'failed' else '排到' }} {{ slot or '（没有空闲时段）' }}</button>
     </form>
-    <form data-post action="/drafts/{{ d.id }}/reject"><button class="danger">驳回</button></form>
+    {% else %}
+    <form data-post action="/drafts/{{ d.id }}/unschedule"><button>撤回排期</button></form>
+    {% endif %}
+    <form data-post action="/drafts/{{ d.id }}/reject" class="right"><button class="ghost">跳过这篇</button></form>
   </div>
-  {% elif d.status == 'scheduled' %}
-  <div class="row actions">
-    <form data-post action="/drafts/{{ d.id }}/unschedule"><button>取消排期</button></form>
-    <form data-post action="/drafts/{{ d.id }}/reject"><button class="danger">驳回</button></form>
-  </div>
-  {% elif d.status == 'published' and d.tweet_ids %}
-  <p><a href="https://x.com/i/web/status/{{ d.tweet_ids[0] }}" target="_blank" rel="noopener noreferrer">在 X 上查看</a></p>
-  {% endif %}
 
   {% set has_hooks = d.alt_hooks and d.status in ('pending', 'failed') %}
   {% set has_revs = d.revisions and d.revisions|length > 1 %}
-  {% if d.status in ('pending', 'failed') or has_revs or d.source_urls %}
   <details class="more">
-    <summary>更多操作{% if has_hooks %}（有 {{ d.alt_hooks|length }} 个备选开头）{% endif %}</summary>
+    <summary>改写与版本{% if has_hooks %} · {{ d.alt_hooks|length }} 个备选开头{% endif %}</summary>
     {% if d.status in ('pending', 'failed') %}
     <div class="row actions">
-      <form data-post action="/drafts/{{ d.id }}/approve" data-confirm="{{ '确定现在就发到 X？' if cfg.publish.enabled else '' }}">
-        <input type="hidden" name="mode" value="now"><button>立即发布</button>
+      {% set auto = x_state()['auto'] %}
+      <form data-post action="/drafts/{{ d.id }}/approve"{% if auto %} data-confirm="现在就发到 X？发出去就撤不回了。"{% endif %}>
+        <input type="hidden" name="mode" value="now"><button>{{ '现在发到 X' if auto else '现在就发' }}</button>
       </form>
       <form data-post action="/drafts/{{ d.id }}/approve" class="row">
         <input type="hidden" name="mode" value="custom">
-        <input type="datetime-local" name="when" required><input type="hidden" name="tz_offset" value="0">
-        <button>按这个时间排期</button>
+        <input type="datetime-local" name="when" required aria-label="排期时间（{{ cfg.timezone }}）">
+        <button>排到这个时间</button>
+        <span class="muted small">{{ cfg.timezone }} 时间</span>
       </form>
     </div>
     <form data-post action="/drafts/{{ d.id }}/rewrite" class="row">
-      <select name="preset">{% for k in presets %}<option value="{{ k }}">{{ preset_zh.get(k, k) }}</option>{% endfor %}</select>
-      <input name="instruction" placeholder="或者写你自己的要求…">
-      <button data-busy="AI 改写中，通常 20–60 秒">AI 改写</button>
+      <select name="preset" aria-label="改写方式">{% for k in presets %}<option value="{{ k }}">{{ preset_zh.get(k, k) }}</option>{% endfor %}</select>
+      <input name="instruction" placeholder="或者写你自己的要求" aria-label="自定义改写要求">
+      <button data-busy="改写中，通常 20–60 秒">改写</button>
     </form>
     {% endif %}
     {% if has_hooks %}
-    <div class="hooks"><span class="muted">其它开头（点一下替换第一句）：</span>
-      {% for h in d.alt_hooks %}<form data-post action="/drafts/{{ d.id }}/hook" class="hook"><input type="hidden" name="index" value="{{ loop.index0 }}"><button class="link" title="用这个开头">{{ h }}</button></form>{% endfor %}
+    <div class="hooks"><span class="muted">其它开头（点一下换掉第一句）：</span>
+      {% for h in d.alt_hooks %}<form data-post action="/drafts/{{ d.id }}/hook" class="hook"><input type="hidden" name="index" value="{{ loop.index0 }}"><button class="link" title="换成这个开头">{{ h }}</button></form>{% endfor %}
     </div>
     {% endif %}
     {% if has_revs %}
@@ -107,5 +138,18 @@
     {% endif %}
     {% if d.source_urls %}<p class="sources">来源：{% for u in d.source_urls %}<a href="{{ u }}" target="_blank" rel="noopener noreferrer">{{ u }}</a> {% endfor %}</p>{% endif %}
   </details>
+
+  {% else %}
+  <div class="tweets">{% for t in d.tweets %}<p>{{ t }}</p>{% endfor %}</div>
+  {% if d.status == 'failed' and d.tweet_ids %}
+  {% set slot = next_slot_label() %}
+  <p class="due-hint">已经发出前 {{ d.tweet_ids|length }} 条，正文不能再改。重新排期会接着发剩下的，不会重复。</p>
+  <div class="row actions">
+    <form data-post action="/drafts/{{ d.id }}/approve"><input type="hidden" name="mode" value="slot">
+      <button class="primary" {% if not slot %}disabled{% endif %}>接着发 · {{ slot or '没有空闲时段' }}</button></form>
+    <a class="button" href="https://x.com/i/web/status/{{ d.tweet_ids[0] }}" target="_blank" rel="noopener noreferrer">在 X 上查看已发出的</a>
+  </div>
+  {% endif %}
+  {% if d.status == 'published' and d.tweet_ids %}<p><a href="https://x.com/i/web/status/{{ d.tweet_ids[0] }}" target="_blank" rel="noopener noreferrer">在 X 上查看</a></p>{% endif %}
   {% endif %}
 </article>

@@ -22,8 +22,11 @@ class FakeX:
     def __init__(self, fail_on=None, status=500):
         self.posts, self.fail_on, self.status, self.token_calls = [], fail_on, status, []
         self.uploads = []
+        self.revoked = False  # the user revoked xdraft's access on X
 
     def handler(self, request: httpx.Request):
+        if self.revoked:
+            return httpx.Response(400 if request.url.path == "/2/oauth2/token" else 401, json={"detail": "revoked"})
         if request.url.path == "/2/media/upload" and request.method == "POST":
             self.uploads.append(request.read())
             return httpx.Response(200, json={"data": {"id": str(900 + len(self.uploads)), "media_key": "3_x"}})
@@ -88,13 +91,97 @@ def test_login_stores_token_privately(cfg, x_env):
     assert fake.token_calls[0]["code_verifier"] and fake.token_calls[0]["client_id"] == ["cid"]
 
 
-def test_dry_run_never_calls_x(cfg, x_env):
+def test_manual_mode_marks_due_and_never_calls_x(cfg, x_env):
     fake, factory = x_env
     with Session(get_engine(cfg.resolve_path(cfg.db_path))) as s:
         d = service.approve(s, _draft(s, ["hello"]))
         service.publish_draft(cfg, s, d, factory)
-        assert d.status == DraftStatus.DRY_RUN and fake.posts == []
-    assert "dry_run" in cfg.resolve_path("data/publish.log").read_text()
+        assert d.status == DraftStatus.DUE and d.published_at is None and fake.posts == []
+    assert '"manual_due"' in cfg.resolve_path("data/publish.log").read_text()
+
+
+def test_enabled_but_not_connected_is_manual_not_failed(cfg, x_env):
+    fake, factory = x_env
+    cfg.publish.enabled = True  # the user turned posting on but never connected X
+    with Session(get_engine(cfg.resolve_path(cfg.db_path))) as s:
+        d = service.publish_draft(cfg, s, service.approve(s, _draft(s, ["hello"])), factory)
+        assert d.status == DraftStatus.DUE and fake.posts == [] and fake.token_calls == []
+
+
+def test_mark_posted_parses_link_and_can_be_undone(cfg):
+    with Session(get_engine(cfg.resolve_path(cfg.db_path))) as s:
+        d = _draft(s, ["one"], status=DraftStatus.DUE)
+        with pytest.raises(ValueError, match="链接"):
+            service.mark_posted(s, d, "https://example.com/nope")
+        service.mark_posted(s, d, " https://x.com/someone/status/1234567890123?s=20 ")
+        assert d.status == DraftStatus.PUBLISHED and d.tweet_ids == ["1234567890123"] and d.published_at
+        service.unmark_posted(s, d)
+        assert d.status == DraftStatus.DUE and d.tweet_ids == [] and d.published_at is None
+        service.mark_posted(s, d, "")  # the link is optional
+        assert d.status == DraftStatus.PUBLISHED and d.tweet_ids == []
+
+
+def test_edited_too_long_after_approval_is_not_posted(cfg, x_env):
+    fake, factory = x_env
+    cfg.publish.enabled = True
+    _connect(factory)
+    with Session(get_engine(cfg.resolve_path(cfg.db_path))) as s:
+        d = service.approve(s, _draft(s, ["ok", "fine"]))
+        d.tweets = ["ok", "x" * 300]  # edited after approval
+        s.add(d)
+        s.commit()
+        service.publish_draft(cfg, s, d, factory)
+        assert d.status == DraftStatus.FAILED and "第 2 条" in d.publish_error
+    assert fake.posts == []  # nothing half-posted
+
+
+def test_two_publishers_never_post_the_same_draft_twice(cfg, x_env):
+    fake, factory = x_env
+    cfg.publish.enabled = True
+    _connect(factory)
+    engine = get_engine(cfg.resolve_path(cfg.db_path))
+    with Session(engine) as s1, Session(engine) as s2:
+        d1 = service.approve(s1, _draft(s1, ["once"]))
+        d2 = s2.get(Draft, d1.id)  # a second process (scheduled task) read it too
+        service.publish_draft(cfg, s1, d1, factory)
+        service.publish_draft(cfg, s2, d2, factory)
+    assert [p[0]["text"] for p in fake.posts] == ["once"]
+
+
+def test_revoked_x_token_falls_back_to_manual(cfg, x_env):
+    fake, factory = x_env
+    cfg.publish.enabled = True
+    _connect(factory)
+    fake.revoked = True
+    with Session(get_engine(cfg.resolve_path(cfg.db_path))) as s:
+        d = service.publish_draft(cfg, s, service.approve(s, _draft(s, ["hi"])), factory)
+        assert d.status == DraftStatus.DUE and fake.posts == []
+
+
+def test_skip_undo_keeps_the_schedule(cfg):
+    from datetime import timedelta as td
+    with Session(get_engine(cfg.resolve_path(cfg.db_path))) as s:
+        later = utcnow() + td(hours=3)
+        d = service.reject(s, service.approve(s, _draft(s, ["one"]), later))
+        assert service.restore(s, d).status == DraftStatus.SCHEDULED
+        d2 = _draft(s, ["two"], status=DraftStatus.DUE)
+        d2.scheduled_at = utcnow() - td(minutes=5)
+        s.add(d2)
+        s.commit()
+        assert service.restore(s, service.reject(s, d2)).status == DraftStatus.DUE
+        assert service.restore(s, service.reject(s, _draft(s, ["three"]))).status == DraftStatus.PENDING
+
+
+def test_mark_posted_only_from_due(cfg):
+    with Session(get_engine(cfg.resolve_path(cfg.db_path))) as s, pytest.raises(ValueError):
+        service.mark_posted(s, _draft(s, ["one"]), "")
+
+
+def test_rejected_draft_can_be_restored(cfg):
+    with Session(get_engine(cfg.resolve_path(cfg.db_path))) as s:
+        d = service.reject(s, _draft(s, ["one"]))
+        assert d.status == DraftStatus.REJECTED
+        assert service.restore(s, d).status == DraftStatus.PENDING
 
 
 def test_unapproved_draft_cannot_be_published(cfg, x_env):
@@ -159,7 +246,7 @@ def test_missing_image_file_fails_the_draft(cfg, x_env):
     assert fake.posts == []
 
 
-def test_dry_run_logs_images(cfg, x_env):
+def test_manual_due_logs_images(cfg, x_env):
     _fake, factory = x_env
     with Session(get_engine(cfg.resolve_path(cfg.db_path))) as s:
         d = _draft(s, ["one"])
@@ -186,7 +273,12 @@ def test_save_image_validates(cfg):
         assert [len(x) for x in media.images_for(d)] == [0, 4]
         gone = d.images[1][0]
         media.remove_image(cfg, d, 1, gone)
-        assert gone not in d.images[1] and not (media.media_dir(cfg, d.id) / gone).exists()
+        # the file stays so the removal can be undone
+        assert gone not in d.images[1] and (media.media_dir(cfg, d.id) / gone).exists()
+        media.restore_image(cfg, d, 1, gone)
+        assert d.images[1][-1] == gone
+        with pytest.raises(ValueError):
+            media.restore_image(cfg, d, 1, "../../config.yaml")
 
 
 def test_failed_thread_resumes_without_duplicates(cfg, x_env):

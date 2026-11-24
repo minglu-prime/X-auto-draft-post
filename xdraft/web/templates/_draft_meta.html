@@ -1,0 +1,4 @@
+<div class="meta" id="meta-{{ d.id }}">
+  {% if meta_error %}<p class="warn" role="alert">{{ meta_error }}</p>{% endif %}
+  {% if d.warnings %}<ul class="warnings">{% for w in d.warnings %}<li>{{ w|warn_zh }}</li>{% endfor %}</ul>{% endif %}
+</div>
