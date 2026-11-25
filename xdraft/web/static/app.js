@@ -18,6 +18,67 @@
     return n;
   }
 
+  // ---- motion: one language, read from the CSS tokens ----------------------------------------
+  // Entering: fade + rise. Leaving: fade + slight shrink. Moving: FLIP (animate from the old place
+  // to the new one with transform only). Every animation can be interrupted by the next change:
+  // FLIP measures where things *look* right now, so a new move starts from mid-flight.
+  const reduced = matchMedia("(prefers-reduced-motion: reduce)");
+  const css = getComputedStyle(document.documentElement);
+  const ms = name => parseFloat(css.getPropertyValue(name)) || 0;
+  const EASE_OUT = "cubic-bezier(.2,.8,.2,1)", EASE_IN = "cubic-bezier(.4,0,1,1)";
+
+  function flip(els, mutate) {
+    const list = els.filter(Boolean);
+    if (reduced.matches || !list.length) { mutate(); return; }
+    const before = list.map(e => e.getBoundingClientRect());
+    list.forEach(e => e.getAnimations().forEach(a => { if (a.id === "flip") a.cancel(); }));
+    mutate();
+    list.forEach((e, i) => {
+      if (!e.isConnected) return;
+      const now = e.getBoundingClientRect();
+      const dx = before[i].left - now.left, dy = before[i].top - now.top;
+      if (Math.abs(dx) < 1 && Math.abs(dy) < 1) return;
+      if (Math.abs(dy) > innerHeight * 1.5) return;  // far away: moving it would only be noise
+      const a = e.animate([{ transform: `translate(${dx}px, ${dy}px)` }, { transform: "none" }],
+        { duration: ms("--t-move"), easing: EASE_OUT });
+      a.id = "flip";
+    });
+  }
+
+  function enter(el) {
+    if (!el || reduced.matches) return;
+    el.classList.remove("entering");
+    void el.offsetWidth;
+    el.classList.add("entering");
+    el.addEventListener("animationend", () => el.classList.remove("entering"), { once: true });
+  }
+
+  function leave(el) {
+    if (!el || reduced.matches || !el.getClientRects().length) return Promise.resolve();
+    return el.animate([{ opacity: 1, transform: "none" }, { opacity: 0, transform: "scale(.98)" }],
+      { duration: ms("--t-fast"), easing: EASE_IN, fill: "forwards" }).finished.catch(() => {});
+  }
+
+  // What moves when `el` changes size or disappears: its siblings in the same grid, the following
+  // topic groups in its section, and the sections after it (never an element and its ancestor).
+  function movers(el) {
+    const out = [];
+    const grid = el.parentElement;
+    if (grid) out.push(...[...grid.children].filter(c => c !== el));
+    const group = el.closest(".topic, .more-topics");
+    if (group) { let n = group.nextElementSibling; while (n) { out.push(n); n = n.nextElementSibling; } }
+    const block = el.closest(".block");
+    if (block) { let n = block.nextElementSibling; while (n) { out.push(n); n = n.nextElementSibling; } }
+    return out;
+  }
+  // Everything after `el` inside its card, plus what moves when that card changes height.
+  function following(el) {
+    const out = [];
+    for (let n = el.nextElementSibling; n; n = n.nextElementSibling) out.push(n);
+    const host = el.closest("[data-swap]");
+    return host ? [...out, ...movers(host)] : out;
+  }
+
   // ---- toasts: success fades out, errors stay; optional undo / action button --------------
   function toast(text, kind = "ok", opts = {}) {
     const box = document.getElementById("toasts");
@@ -28,12 +89,20 @@
     const msg = document.createElement("span");
     msg.textContent = text;
     el.appendChild(msg);
-    const close = () => el.remove();
+    let closing = false;
+    const close = () => {
+      if (closing) return;
+      closing = true;
+      const remove = () => flip([...box.children].filter(c => c !== el), () => el.remove());
+      if (reduced.matches) { remove(); return; }
+      el.classList.add("leaving");
+      el.addEventListener("animationend", remove, { once: true });
+    };
     if (opts.action) {
       const b = document.createElement("button");
       b.className = "toast-action";
       b.textContent = opts.action.label;
-      b.onclick = () => { close(); opts.action.run(); };
+      b.onclick = () => { if (closing) return; close(); opts.action.run(); };  // runs once, even on double-click
       el.appendChild(b);
     }
     const x = document.createElement("button");
@@ -43,6 +112,7 @@
     x.onclick = close;
     el.appendChild(x);
     box.appendChild(el);
+    el.dismiss = close;
     if (kind === "ok") setTimeout(close, opts.action ? 8000 : 4000);
     return el;
   }
@@ -71,20 +141,31 @@
   }
 
   // Replace `target` (an element with data-swap) or fill it, then surface any server message.
-  function swapIn(target, html) {
+  // A card that goes away fades out and the rest slide up; one that comes back (undo) rises in;
+  // one updated in place stays put while only its new parts (e.g. a new image) fade in.
+  async function swapIn(target, html) {
     if (!target) return null;
-    let node = target;
-    if (target.hasAttribute("data-swap")) {
-      const frag = parse(html);
-      const first = frag.firstElementChild;
-      const caret = caretOf(target);
-      target.replaceWith(frag);
-      node = first || null;
-      restoreCaret(node, caret);
-    } else {
+    if (!target.hasAttribute("data-swap")) {
       target.innerHTML = html;
+      enter(target);
+      announce(target);
+      return target;
     }
-    if (node) announce(node);
+    const frag = parse(html);
+    const node = frag.firstElementChild;
+    if (!node) { target.remove(); return null; }
+    const wasHidden = target.hidden, goesHidden = node.hidden;
+    const oldImgs = new Set([...target.querySelectorAll("img")].map(i => i.getAttribute("src")));
+    const newImgs = new Set([...node.querySelectorAll("img")].map(i => i.getAttribute("src")));
+    const caret = caretOf(target);
+    if (goesHidden && !wasHidden) await leave(target);
+    else await Promise.all([...target.querySelectorAll("img")]  // removed images fade out first
+      .filter(i => !newImgs.has(i.getAttribute("src"))).map(i => leave(i.closest("figure, a") || i)));
+    flip(movers(target), () => target.replaceWith(node));
+    restoreCaret(node, caret);
+    if (wasHidden && !goesHidden) enter(node);
+    else node.querySelectorAll("img").forEach(i => { if (!oldImgs.has(i.getAttribute("src"))) enter(i.closest("figure, a") || i); });
+    announce(node);
     return node;
   }
 
@@ -106,7 +187,7 @@
       const html = await resp.text();
       if (!resp.ok) throw new Error(textOf(html) || resp.statusText);
       const el = id && document.getElementById(id);
-      if (el) swapIn(el, html);
+      if (el) await swapIn(el, html);
       else go(location.href);
     } catch (err) {
       toast("撤销失败：" + err.message, "err");
@@ -125,21 +206,50 @@
     return a && (a.tagName === "TEXTAREA" || (a.tagName === "INPUT" && /^(text|url|search|)$/.test(a.type)))
       && a.value.trim() !== "";
   }
+  // Show a page's fresh state without a full reload: fetch it, swap header + main inside a view
+  // transition (the step bar and header stay still, content cross-fades), then glide to #section.
+  let refreshGen = 0;  // only the latest refresh may replace the page
+  async function refresh(u) {
+    const gen = ++refreshGen;
+    try {
+      // Pending autosaves would be lost with the old cards: finish them first.
+      const saved = await Promise.all([...document.querySelectorAll(".draft")].map(flush));
+      if (!saved.every(Boolean)) { toast("有修改没保存上，先没刷新页面", "err"); return; }
+      const resp = await fetch(u.pathname + u.search, { headers: H });
+      if (!resp.ok) throw new Error(resp.statusText);
+      const doc = new DOMParser().parseFromString(await resp.text(), "text/html");
+      if (gen !== refreshGen) return;
+      const apply = () => {
+        document.querySelector("header.top").replaceWith(doc.querySelector("header.top"));
+        document.querySelector("main").replaceWith(doc.querySelector("main"));
+        document.title = doc.title;
+        const same = u.pathname + u.search === location.pathname + location.search;
+        history[same ? "replaceState" : "pushState"](null, "", u.href);
+      };
+      if (document.startViewTransition && !reduced.matches) {
+        await document.startViewTransition(apply).updateCallbackDone;
+      } else {
+        apply();
+      }
+      const main = document.querySelector("main");
+      flashes(main);
+      announce(main);
+      knownDue = document.querySelectorAll("#due .draft").length;
+      baseTitle = document.title;
+      const target = u.hash && document.getElementById(decodeURIComponent(u.hash.slice(1)));
+      if (target) target.scrollIntoView({ behavior: reduced.matches ? "auto" : "smooth", block: "start" });
+    } catch (err) {
+      toast("页面刷新失败：" + err.message, "err", { action: { label: "重新加载", run: () => location.reload() } });
+    }
+  }
+  window.addEventListener("popstate", () => location.reload());
+
   function go(url) {
     const u = new URL(url, location.href);
-    const reload = () => {
-      if (u.pathname === location.pathname && u.search === location.search) {
-        history.scrollRestoration = "manual";  // land on the #section, not the old scroll position
-        location.hash = u.hash;
-        location.reload();
-      } else {
-        location.href = u.href;
-      }
-    };
     if (typing()) {
-      toast("有新内容", "ok", { action: { label: "刷新", run: reload } });
+      toast("有新内容", "ok", { action: { label: "刷新", run: () => refresh(u) } });
     } else {
-      reload();
+      refresh(u);
     }
   }
 
@@ -151,7 +261,10 @@
 
   function setState(card, text, kind) {
     const s = card.querySelector(".save-state");
-    if (s) { s.textContent = text; s.dataset.kind = kind || ""; }
+    if (!s || s.textContent === text) return;
+    s.textContent = text;
+    s.dataset.kind = kind || "";
+    if (!reduced.matches) s.animate([{ opacity: .35 }, { opacity: 1 }], { duration: 90, easing: EASE_OUT });
   }
 
   function renumber(editor) {
@@ -192,11 +305,13 @@
 
   // Saves for one card run strictly one after another (each reads the boxes when it starts), and the
   // queue is registered at once, so flush() never misses a save that is still waiting its turn.
-  function save(card) {
+  // `before` (optional) is a change still animating out, e.g. a tweet being deleted: the save, and
+  // so any flush(), waits for it.
+  function save(card, before) {
     clearTimeout(timers.get(card));
     timers.delete(card);
     const prev = inflight.get(card) || Promise.resolve(true);
-    const job = prev.then(() => doSave(card));
+    const job = prev.then(() => before).then(() => doSave(card));
     inflight.set(card, job);
     job.finally(() => { if (inflight.get(card) === job) inflight.delete(card); });
     return job;
@@ -275,7 +390,7 @@
         const resp = await fetch(`/drafts/${id}/images`, { method: "POST", body, headers: H });
         const html = await resp.text();
         if (!resp.ok) throw new Error(textOf(html) || resp.statusText);
-        swapIn(document.getElementById(`draft-${id}`), html);
+        await swapIn(document.getElementById(`draft-${id}`), html);
       } catch (err) {
         toast("配图失败：" + err.message, "err");
       } finally {
@@ -305,12 +420,13 @@
   document.addEventListener("click", e => {
     const add = e.target.closest(".add-tweet");
     if (add) {
-      const editor = add.closest(".editor");
+      const editor = add.closest(".editor"), card = editor.closest(".draft");
       const b = newBlock();
-      add.before(b);
+      flip([add, ...movers(card)], () => add.before(b));
+      enter(b);
       renumber(editor);
-      recount(editor.closest(".draft"));
-      b.querySelector("textarea").focus();
+      recount(card);
+      b.querySelector("textarea").focus({ preventScroll: true });
       return;
     }
     const del = e.target.closest(".tweet-del");
@@ -319,15 +435,24 @@
       const block = del.closest(".tweet-block");
       const at = blocks(editor).indexOf(block);
       const text = block.querySelector("textarea").value;
-      block.remove();
-      renumber(editor);
-      recount(card);
-      save(card);
+      const after = [];
+      for (let n = block.nextElementSibling; n; n = n.nextElementSibling) after.push(n);
+      del.disabled = true;
+      // Registered now, so an action clicked during the fade-out waits for the deletion to be saved.
+      save(card, leave(block).then(() => {
+        flip([...after, ...movers(card)], () => block.remove());
+        renumber(editor);
+        recount(card);
+      }));
       if (text.trim()) {
         toast(`已删掉第 ${at + 1} 条`, "ok", { action: { label: "撤销", run: () => {
           const back = newBlock(text);
           const list = blocks(editor);
-          (list[at] ? list[at].before(back) : editor.querySelector(".add-tweet").before(back));
+          const anchor = list[at] || editor.querySelector(".add-tweet");
+          const shifted = [];
+          for (let n = anchor; n; n = n.nextElementSibling) shifted.push(n);
+          flip([...shifted, ...movers(card)], () => anchor.before(back));
+          enter(back);
           renumber(editor);
           recount(card);
           save(card);
@@ -403,9 +528,11 @@
   });
 
   // ---- form submission ------------------------------------------------------------------------
+  let busyCount = 0;  // overlapping requests: the bar stays until the last one finishes
   function busy(on) {
+    busyCount = Math.max(0, busyCount + (on ? 1 : -1));
     const bar = document.getElementById("busy-bar");
-    if (bar) bar.hidden = !on;
+    if (bar) bar.hidden = busyCount === 0;
   }
 
   document.addEventListener("submit", async e => {
@@ -423,17 +550,34 @@
     // one shows elapsed seconds; the card's text boxes are read-only until the answer arrives.
     const buttons = [...form.querySelectorAll("button"), ...document.querySelectorAll(`button[form="${form.id}"]`)];
     const clicked = submitter || form.querySelector("button");
-    buttons.forEach(b => { b.disabled = true; b.dataset.label = b.textContent; b.style.minWidth = b.offsetWidth + "px"; });
+    // The clicked button keeps its exact size: it shows a short status + seconds; the longer
+    // explanation ("usually 1–2 minutes") appears as a line under it instead of widening it.
+    buttons.forEach(b => {
+      b.disabled = true;
+      b.dataset.label = b.textContent;
+      if (b === clicked) { b.style.width = b.offsetWidth + "px"; b.style.whiteSpace = "nowrap"; b.setAttribute("aria-busy", "true"); }
+    });
     const locked = card ? [...card.querySelectorAll("textarea")] : [];
     locked.forEach(t => { t.readOnly = true; });
-    const busyText = clicked && clicked.dataset.busy;
+    const [short, ...rest] = ((clicked && clicked.dataset.busy) || "").split("，");
+    let hint = null;
+    if (clicked && rest.length) {
+      hint = document.createElement("p");
+      hint.className = "busy-hint muted small";
+      hint.setAttribute("role", "status");
+      hint.textContent = `${short}，${rest.join("，")}`;
+      const anchor = clicked.closest(".row, .next, form") || clicked.parentElement;
+      flip(following(anchor), () => anchor.after(hint));  // what's below slides down, never jumps
+      enter(hint);
+    }
     const started = Date.now();
     const tick = () => {
-      if (clicked) clicked.textContent = busyText
-        ? `${busyText} · ${Math.round((Date.now() - started) / 1000)}s` : "处理中…";
+      if (!clicked) return;
+      const secs = Math.round((Date.now() - started) / 1000);
+      clicked.textContent = short ? (secs ? `${short} ${secs}s` : `${short}…`) : "处理中…";
     };
     tick();
-    const timer = busyText ? setInterval(tick, 1000) : null;
+    const timer = short ? setInterval(tick, 1000) : null;
     busy(true);
     try {
       const resp = await fetch(action, { method: "POST", body, headers: H });
@@ -445,9 +589,14 @@
       if (form.closest(".skipped")) {  // restoring from History: the draft goes back to the workbench
         const li = form.closest("li");
         announce(parse(html).firstElementChild || document.createElement("div"));
-        if (li) li.remove();
+        if (li) {
+          const after = [];
+          for (let n = li.nextElementSibling; n; n = n.nextElementSibling) after.push(n);
+          await leave(li);
+          flip(after, () => li.remove());
+        }
       } else if (target) {
-        swapIn(target, html);
+        await swapIn(target, html);
         if (!target.hasAttribute("data-swap")) {
           target.querySelectorAll("p.ok:not([data-toast])").forEach(p => { toast(p.textContent.trim()); });
         }
@@ -458,9 +607,14 @@
     } finally {
       if (timer) clearInterval(timer);
       busy(false);
+      if (hint) leave(hint).then(() => flip(following(hint), () => hint.remove()));
       locked.forEach(t => { if (t.isConnected) t.readOnly = false; });
       buttons.forEach(b => {
-        if (b.isConnected) { b.disabled = false; b.textContent = b.dataset.label; b.style.minWidth = ""; }
+        if (!b.isConnected) return;
+        b.disabled = false;
+        b.textContent = b.dataset.label;
+        b.style.width = b.style.whiteSpace = "";
+        b.removeAttribute("aria-busy");
       });
       if (card && card.isConnected) recount(card);
     }
@@ -468,10 +622,13 @@
 
   // ---- page load --------------------------------------------------------------------------------
   // One feedback channel: one-shot success messages become toasts; problems stay on the page.
-  document.querySelectorAll(".flash").forEach(f => {
-    f.querySelectorAll(":scope > p.ok").forEach(p => { toast(p.textContent.trim()); p.remove(); });
-    if (!f.textContent.trim()) f.remove();
-  });
+  function flashes(root) {
+    root.querySelectorAll(".flash").forEach(f => {
+      f.querySelectorAll(":scope > p.ok").forEach(p => { toast(p.textContent.trim()); p.remove(); });
+      if (!f.textContent.trim()) f.remove();
+    });
+  }
+  flashes(document);
   announce(document);
 
   // Leaving with unsaved text: save it, and let the browser warn if that cannot finish.
@@ -481,7 +638,7 @@
   });
 
   // A post may come due while the page is open: say so without interrupting.
-  const baseTitle = document.title;
+  let baseTitle = document.title;
   let knownDue = document.querySelectorAll("#due .draft").length;
   let offline = null;
   async function poll() {
@@ -490,7 +647,7 @@
       const resp = await fetch("/status", { headers: H });
       if (!resp.ok) throw new Error(resp.statusText);
       const s = await resp.json();
-      if (offline) { offline.remove(); offline = null; }
+      if (offline) { offline.dismiss(); offline = null; toast("已重新连上 xdraft"); }
       document.title = s.due ? `(${s.due}) 该发了 · ${baseTitle}` : baseTitle;
       if (s.due > knownDue) {
         toast(`有 ${s.due} 篇该发了`, "ok", { action: { label: "查看", run: () => go("/#due") } });
